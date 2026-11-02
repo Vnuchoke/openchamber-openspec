@@ -1,0 +1,9 @@
+schema: spec-driven
+created: 2026-11-02
+goal: "Обеспечить доступ из интерфейса расширения ко всем 12 OpenSpec workflows:
+  Propose change, Explore ideas, New change, Continue change, Apply tasks,
+  Update change, Fast-forward, Sync specs, Archive change, Bulk archive, Verify
+  change и Onboard. Добавить недостающие действия, явно различить продолжение
+  создания артефактов и продолжение реализации задач. Сохранить подготовку
+  неотправленного промпта в текущем чате по умолчанию и существующие
+  подтверждения для автоматического запуска сессий."
