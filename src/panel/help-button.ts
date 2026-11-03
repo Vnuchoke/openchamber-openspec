@@ -1,11 +1,129 @@
 import { mountButton } from "@openchamber/sdk/ui";
 
+let tooltipId = 0;
+let dismissTooltip: (() => void) | null = null;
+let overTooltip: ((event: PointerEvent) => boolean) | null = null;
+
+export function mountTooltip(button: HTMLButtonElement, text: string) {
+  const id = `button-outcome-${++tooltipId}`;
+  let tooltip: HTMLElement | null = null;
+  const usable = () =>
+    button.isConnected &&
+    !button.disabled &&
+    button.checkVisibility() &&
+    !Array.from(document.querySelectorAll<HTMLElement>('.workflow-menu [role="menu"]')).some(
+      (menu) => menu.checkVisibility(),
+    );
+  const containsPointer = (event: PointerEvent) => {
+    const box = tooltip?.getBoundingClientRect();
+    return (
+      !!box &&
+      event.clientX >= box.left &&
+      event.clientX <= box.right &&
+      event.clientY >= box.top &&
+      event.clientY <= box.bottom
+    );
+  };
+  let observer: MutationObserver | null = null;
+  function hide() {
+    if (dismissTooltip === hide) {
+      dismissTooltip = null;
+      overTooltip = null;
+    }
+    document.removeEventListener("keydown", escape);
+    document.removeEventListener("pointermove", leave);
+    document.removeEventListener("pointerdown", hide, true);
+    window.removeEventListener("resize", hide);
+    window.removeEventListener("scroll", hide, true);
+    observer?.disconnect();
+    observer = null;
+    tooltip?.remove();
+    tooltip = null;
+    const ids = (button.getAttribute("aria-describedby") ?? "")
+      .split(/\s+/)
+      .filter((item) => item && item !== id);
+    if (ids.length) button.setAttribute("aria-describedby", ids.join(" "));
+    else button.removeAttribute("aria-describedby");
+  }
+  function show(event: Event) {
+    if (tooltip || !usable()) return;
+    if (event instanceof PointerEvent && overTooltip?.(event)) return;
+    dismissTooltip?.();
+    dismissTooltip = hide;
+    overTooltip = containsPointer;
+    tooltip = document.createElement("div");
+    tooltip.id = id;
+    tooltip.className = "button-tooltip";
+    tooltip.setAttribute("role", "tooltip");
+    tooltip.textContent = text;
+    (button.closest("dialog") ?? document.body).append(tooltip);
+    button.setAttribute(
+      "aria-describedby",
+      [button.getAttribute("aria-describedby"), id].filter(Boolean).join(" "),
+    );
+    const anchor = button.getBoundingClientRect();
+    const box = tooltip.getBoundingClientRect();
+    tooltip.style.left = `${Math.max(4, Math.min(anchor.left, innerWidth - box.width - 4))}px`;
+    // Prefer above the control so descriptions do not cover the next wrapped action row.
+    const top = anchor.top - box.height >= 4 ? anchor.top - box.height : anchor.bottom;
+    tooltip.style.top = `${Math.max(4, Math.min(top, innerHeight - box.height - 4))}px`;
+    // Observe only while visible, so owner updates/removal cannot leave an orphan description.
+    observer = new MutationObserver(() => {
+      if (!usable()) hide();
+    });
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["hidden", "disabled", "open", "style", "class"],
+    });
+    document.addEventListener("keydown", escape);
+    document.addEventListener("pointermove", leave);
+    document.addEventListener("pointerdown", hide, true);
+    window.addEventListener("resize", hide);
+    window.addEventListener("scroll", hide, true);
+  }
+  function leave(event: PointerEvent) {
+    if (containsPointer(event)) return;
+    if (
+      event.type === "pointermove" &&
+      event.target instanceof Node &&
+      button.contains(event.target)
+    )
+      return;
+    hide();
+  }
+  const escape = (event: KeyboardEvent) => {
+    if (event.key === "Escape") hide();
+  };
+  // Actual pointer movement must not let a stationary cursor override a keyboard-focused tooltip.
+  button.addEventListener("pointermove", show);
+  button.addEventListener("pointerleave", leave);
+  button.addEventListener("focus", show);
+  button.addEventListener("blur", hide);
+  button.addEventListener("click", hide, true);
+  return {
+    update(next = text) {
+      if (next !== text || !usable()) hide();
+      text = next;
+    },
+    dispose() {
+      hide();
+      button.removeEventListener("pointermove", show);
+      button.removeEventListener("pointerleave", leave);
+      button.removeEventListener("focus", show);
+      button.removeEventListener("blur", hide);
+      button.removeEventListener("click", hide, true);
+    },
+  };
+}
+
 export function mountHelpButton(root: HTMLElement, onClick: () => void) {
   root.className = "help-control";
   const handle = mountButton(root, { label: "", variant: "ghost", size: "sm", onClick });
   const button = root.querySelector("button")!;
   button.setAttribute("aria-label", "OpenSpec quickstart");
-  button.title = "OpenSpec quickstart";
+  const tooltip = mountTooltip(button, "Open the OpenSpec quickstart guide.");
   const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   icon.setAttribute("viewBox", "0 0 24 24");
   icon.setAttribute("width", "16");
@@ -31,5 +149,10 @@ export function mountHelpButton(root: HTMLElement, onClick: () => void) {
   dot.setAttribute("fill", "currentColor");
   icon.append(outline, hook, dot);
   button.prepend(icon);
-  return handle;
+  return {
+    dispose() {
+      tooltip.dispose();
+      handle.dispose();
+    },
+  };
 }

@@ -2,6 +2,7 @@ import { mountButton, mountTextField } from "@openchamber/sdk/ui";
 import { isChangeName } from "../model.js";
 import { ServiceRequestError, type Client, type Scope } from "./client.js";
 import { addButtonIcon } from "./button-icon.js";
+import { mountTooltip } from "./help-button.js";
 
 type Attempt = { scope: Scope; name: string; goal: string };
 type Mode =
@@ -67,13 +68,13 @@ export function mountCreateDialog(
   const inspectRoot = document.createElement("span");
   const forgetRoot = document.createElement("span");
   const dismiss = mountButton(cancelRoot, {
-    label: "cancel",
+    label: "Cancel",
     variant: "secondary",
     size: "sm",
     onClick: () => dialog.close(),
   });
   const submit = mountButton(submitRoot, {
-    label: "create",
+    label: "Create",
     variant: "default",
     size: "sm",
     onClick: () => void submitChange(),
@@ -121,6 +122,28 @@ export function mountCreateDialog(
     },
   });
   actions.append(cancelRoot, forgetRoot, retryRoot, inspectRoot, submitRoot);
+  const tooltips = [
+    mountTooltip(
+      cancelRoot.querySelector("button")!,
+      "Close this form without creating another scaffold.",
+    ),
+    mountTooltip(
+      submitRoot.querySelector("button")!,
+      "Directly create the named scaffold and recorded goal in the original project; no agent is launched.",
+    ),
+    mountTooltip(
+      retryRoot.querySelector("button")!,
+      "Read the original project to check the uncertain creation outcome; do not retry creation.",
+    ),
+    mountTooltip(
+      inspectRoot.querySelector("button")!,
+      "Open the observed change for inspection; this does not confirm that creation succeeded.",
+    ),
+    mountTooltip(
+      forgetRoot.querySelector("button")!,
+      "Dismiss this attempt without retrying creation or removing any existing change.",
+    ),
+  ];
   form.append(heading, nameRoot, goalRoot, message, actions);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -149,6 +172,7 @@ export function mountCreateDialog(
     if (!attempt && draftScope && !sameContext(draftScope)) discardDraft();
   });
   function paint() {
+    tooltips.forEach((tooltip) => tooltip.update());
     if (disposed) return;
     const current = callbacks.current();
     const origin = attempt?.scope ?? draftScope;
@@ -271,6 +295,7 @@ export function mountCreateDialog(
     },
     update: paint,
     dispose() {
+      tooltips.forEach((tooltip) => tooltip.dispose());
       disposed = true;
       generation++;
       dismiss.dispose();

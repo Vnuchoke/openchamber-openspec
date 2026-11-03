@@ -4,11 +4,12 @@ import type { DerivedChange } from "../model.js";
 import type { ReadState } from "./resources.js";
 import { mountDocumentView } from "./document-view.js";
 import { mountTasksView } from "./tasks-view.js";
-import { stageLabel } from "./workflow.js";
-import { mountPrimaryAction, type PrimaryIntent } from "./primary-action.js";
+import { changeWorkflows, stageLabel, type ChangeWorkflow } from "./workflow.js";
+import { mountPrimaryAction, mountWorkflowMenu, type PrimaryIntent } from "./primary-action.js";
 import { addButtonIcon } from "./button-icon.js";
 import { mountAreaBadges } from "./area-badges.js";
 import { documentFormat } from "./document-renderer.js";
+import { mountTooltip } from "./help-button.js";
 
 export type DetailState = {
   change: DerivedChange;
@@ -21,6 +22,7 @@ export type DetailState = {
   refreshError: string | null;
   pending?: boolean;
   primaryAction: (intent: PrimaryIntent) => void;
+  workflow: (workflow: ChangeWorkflow) => void;
 };
 
 const tones = {
@@ -96,7 +98,6 @@ export function mountDetailView(
   chevron.append(path);
   backButton.prepend(chevron);
   backButton.setAttribute("aria-label", "Back to changes");
-  backButton.title = "Back to changes";
   const title = document.createElement("h1");
   title.id = "change-detail-title";
   shell.setAttribute("aria-labelledby", title.id);
@@ -114,7 +115,6 @@ export function mountDetailView(
   });
   const copyButton = copyRoot.querySelector("button")!;
   copyButton.setAttribute("aria-label", "Copy change name");
-  copyButton.title = "Copy change name";
   addButtonIcon(copyRoot, "copy");
   nameGroup.append(title, copyRoot);
   titleGroup.append(nameGroup);
@@ -125,7 +125,7 @@ export function mountDetailView(
   const refreshRoot = document.createElement("span");
   refreshRoot.className = "refresh-control";
   const refresh = mountButton(refreshRoot, {
-    label: "refresh",
+    label: "Refresh",
     variant: "ghost",
     size: "sm",
     onClick: callbacks.refresh,
@@ -134,14 +134,13 @@ export function mountDetailView(
   const deleteRoot = document.createElement("span");
   deleteRoot.className = "detail-delete";
   const deleteAction = mountButton(deleteRoot, {
-    label: "delete",
+    label: "Delete",
     variant: "destructive",
     size: "sm",
     onClick: callbacks.delete,
   });
   const deleteButton = deleteRoot.querySelector("button")!;
   deleteButton.setAttribute("aria-label", "Delete change");
-  deleteButton.title = "Delete change";
   addButtonIcon(deleteRoot, "delete");
   headingActions.append(refreshRoot, deleteRoot);
   const goal = document.createElement("p");
@@ -190,19 +189,45 @@ export function mountDetailView(
   const action = mountPrimaryAction(actionRoot);
   const verifyRoot = document.createElement("span");
   const verify = mountButton(verifyRoot, {
-    label: "verify",
+    label: "Verify",
     variant: "secondary",
     size: "sm",
     onClick: () => callbacks.action("verify"),
   });
   const exploreRoot = document.createElement("span");
   const explore = mountButton(exploreRoot, {
-    label: "explore",
+    label: "Explore",
     variant: "secondary",
     size: "sm",
     onClick: () => callbacks.action("explore"),
   });
-  footer.append(exploreRoot, verifyRoot, actionRoot);
+  const workflowRoot = document.createElement("span");
+  const workflows = mountWorkflowMenu(workflowRoot, changeWorkflows);
+  const tooltips = [
+    mountTooltip(backButton, "Return to the changes board."),
+    mountTooltip(copyButton, "Copy this change's name to the clipboard."),
+    mountTooltip(
+      refreshRoot.querySelector("button")!,
+      "Read the latest change, document and task state without changing files.",
+    ),
+    mountTooltip(
+      deleteButton,
+      "Open confirmation before permanently removing this change's planning folder.",
+    ),
+    mountTooltip(
+      retryRoot.querySelector("button")!,
+      "Retry reading this change; do not repeat any write.",
+    ),
+    mountTooltip(
+      exploreRoot.querySelector("button")!,
+      "Prepare an editable, unsent exploration prompt without file changes.",
+    ),
+    mountTooltip(
+      verifyRoot.querySelector("button")!,
+      "Prepare an editable, unsent diagnostic verification prompt; do not implement or archive.",
+    ),
+  ];
+  footer.append(exploreRoot, verifyRoot, actionRoot, workflowRoot);
   body.append(toolbar, unavailable, refreshIssue, content);
   shell.append(header, body, footer);
   root.append(shell);
@@ -262,8 +287,10 @@ export function mountDetailView(
   }
   return {
     update(state: DetailState | null) {
+      tooltips.forEach((tooltip) => tooltip.update());
       shell.hidden = !state;
       if (!state) {
+        workflows.update({ disabled: true, action: () => {} });
         reset();
         changeId = "";
         return;
@@ -295,6 +322,7 @@ export function mountDetailView(
         action: state.primaryAction,
       });
       exploreRoot.hidden = state.change.stage !== "planning";
+      workflows.update({ disabled: state.unavailable, action: state.workflow });
       explore.update({ disabled: state.unavailable });
       deleteAction.update({ disabled: state.unavailable });
       verifyRoot.hidden = state.change.stage !== "complete";
@@ -419,6 +447,7 @@ export function mountDetailView(
       }
     },
     dispose() {
+      tooltips.forEach((tooltip) => tooltip.dispose());
       reset();
       back.dispose();
       copy.dispose();
@@ -428,6 +457,7 @@ export function mountDetailView(
       stageBadge.dispose();
       areas.dispose();
       action.dispose();
+      workflows.dispose();
       explore.dispose();
       verify.dispose();
       tabControl.dispose();

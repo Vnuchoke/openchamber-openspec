@@ -1,5 +1,6 @@
 import { mountButton } from "@openchamber/sdk/ui";
 import { renderDocument } from "./document-renderer.js";
+import { mountTooltip } from "./help-button.js";
 
 export function mountDocumentView(
   root: HTMLElement,
@@ -44,6 +45,10 @@ export function mountDocumentView(
     onClick: () => onRetry(),
   });
   root.append(content, presentationIssue, status, issue, retryRoot);
+  const tooltip = mountTooltip(
+    retryRoot.querySelector("button")!,
+    "Retry reading this document; do not repeat any write.",
+  );
   let displayed: string | null = null;
   let format: string | null = null;
   let renderingFailed = false;
@@ -57,6 +62,7 @@ export function mountDocumentView(
       retry: () => void;
       canRetry: boolean;
     }) {
+      tooltip.update();
       if (next.hasContent && (displayed !== next.text || format !== (next.format ?? "text"))) {
         renderingFailed = false;
         try {
@@ -76,7 +82,9 @@ export function mountDocumentView(
         displayed = next.text;
         format = next.format ?? "text";
       }
-      content.hidden = !next.hasContent;
+      // Keep the last render during loading so refresh cannot collapse the scroll container.
+      const hasContent = next.hasContent || (displayed !== null && !!next.status && !next.error);
+      content.hidden = !hasContent;
       presentationIssue.hidden = !next.hasContent || !renderingFailed;
       status.textContent = next.status ?? "";
       status.hidden = !next.status;
@@ -87,6 +95,7 @@ export function mountDocumentView(
       retry.update({ disabled: !next.canRetry });
     },
     dispose() {
+      tooltip.dispose();
       content.removeEventListener("click", onLink);
       content.removeEventListener("auxclick", onLink);
       retry.dispose();

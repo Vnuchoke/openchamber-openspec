@@ -5,6 +5,44 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OpenSpec</title>
     <style>
+      .button-tooltip {
+        position: fixed;
+        pointer-events: none;
+        z-index: 2147483647;
+        box-sizing: border-box;
+        width: max-content;
+        max-width: min(300px, calc(100vw - 8px));
+        max-height: calc(100vh - 8px);
+        overflow: auto;
+        padding: 8px 10px;
+        border: 1px solid var(--oc-border);
+        border-radius: var(--oc-radius, 8px);
+        background: var(--oc-elevated);
+        color: var(--oc-fg);
+        font: 12px/1.5 var(--oc-font, system-ui, sans-serif);
+        overflow-wrap: anywhere;
+      }
+      .workflow-menu [role="menu"] {
+        width: min(300px, calc(100vw - 16px));
+        box-sizing: border-box;
+      }
+      .workflow-menu [role="menuitem"] {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        flex-shrink: 0;
+        white-space: normal;
+      }
+      .workflow-description {
+        display: none;
+        color: var(--oc-muted);
+        font-size: 12px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+      [data-active="true"] > .workflow-description {
+        display: block;
+      }
       :root {
         min-height: 100dvh;
         background: transparent;

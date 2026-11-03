@@ -242,7 +242,7 @@ for (const shared of [false, true])
           ["auth", "api", "auth"],
         );
         await panelFrame.getByRole("button", { name: "Back to changes" }).click();
-        await panelFrame.getByRole("button", { name: "refresh", exact: true }).click();
+        await panelFrame.getByRole("button", { name: "Refresh", exact: true }).click();
         await panelFrame
           .getByText("1 of 1 tasks complete", { exact: true })
           .first()
@@ -265,7 +265,7 @@ for (const shared of [false, true])
           .getByRole("heading", { name: "Edited integration document" })
           .waitFor({ timeout: 30000 });
         await setAreas([]);
-        await panelFrame.getByRole("button", { name: "refresh", exact: true }).click();
+        await panelFrame.getByRole("button", { name: "Refresh", exact: true }).click();
         await panelFrame
           .locator(".detail .affected-areas")
           .waitFor({ state: "hidden", timeout: 30000 });
@@ -274,13 +274,13 @@ for (const shared of [false, true])
         await panelFrame.getByRole("heading", { name: "Complete 1" }).waitFor({ timeout: 30000 });
         const completedCard = panelFrame.locator(".change-card").filter({ hasText: change });
         assert.equal(await completedCard.locator(".affected-areas").isVisible(), false);
-        await completedCard.getByRole("button", { name: "archive" }).click();
+        await completedCard.getByRole("button", { name: "Archive" }).click();
         await page.waitForFunction(() =>
           window.__compose?.text?.startsWith(
             "Use your skill tool to load and invoke the openspec-archive-change skill for ",
           ),
         );
-        await completedCard.getByRole("button", { name: "verify" }).click();
+        await completedCard.getByRole("button", { name: "Verify" }).click();
         await page.waitForFunction(() =>
           window.__compose?.text?.startsWith(
             "Use your skill tool to load and invoke the openspec-verify-change skill for ",
@@ -294,23 +294,23 @@ for (const shared of [false, true])
           await page.evaluate(() => window.__requests.some((item) => item.path === "/archive")),
           false,
         );
-        await panelFrame.getByRole("button", { name: "new change" }).click();
+        await panelFrame.getByRole("button", { name: "Create scaffold…", exact: true }).click();
         await panelFrame.getByLabel("Change name", { exact: true }).fill("created-in-fixture");
         await panelFrame.getByLabel("Goal").fill("Fixture creation goal");
-        await panelFrame.getByRole("button", { name: "create", exact: true }).click();
+        await panelFrame.getByRole("button", { name: "Create", exact: true }).click();
         await panelFrame
           .getByRole("button", { name: "created-in-fixture" })
           .waitFor({ timeout: 30000 });
         await panelFrame
           .locator(".change-card")
           .filter({ hasText: "created-in-fixture" })
-          .getByRole("button", { name: "propose" })
+          .getByRole("button", { name: "Continue artifacts", exact: true })
           .click();
         await page.waitForFunction(() => window.__compose?.text?.includes("created-in-fixture"));
         assert.equal(await page.evaluate(() => window.__compose.mode), "replace");
         assert.match(
           await page.evaluate(() => window.__compose.text),
-          /^Use your skill tool to load and invoke the openspec-propose skill for OpenSpec change "created-in-fixture" \(existing change\)\.\nGoal: Fixture creation goal\n\nInspect/,
+          /^Use your skill tool to load and invoke the openspec-continue-change skill for OpenSpec change "created-in-fixture"\.\nGoal: Fixture creation goal\n\nInspect/,
         );
         await panelFrame.getByRole("button", { name: "created-in-fixture" }).click();
         await panelFrame
@@ -318,7 +318,7 @@ for (const shared of [false, true])
           .getByRole("button", { name: "Delete change" })
           .click();
         const confirm = panelFrame.getByRole("dialog", { name: /Delete created-in-fixture/ });
-        await confirm.getByRole("button", { name: "delete" }).click();
+        await confirm.getByRole("button", { name: "Delete" }).click();
         await panelFrame
           .getByRole("button", { name: "created-in-fixture" })
           .waitFor({ state: "hidden", timeout: 30000 });

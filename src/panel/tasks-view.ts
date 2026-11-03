@@ -1,6 +1,7 @@
 import { mountButton, mountProgress } from "@openchamber/sdk/ui";
 import type { Task } from "../contracts.js";
 import type { ReadState } from "./resources.js";
+import { mountTooltip } from "./help-button.js";
 
 export function mountTasksView(root: HTMLElement, retryRead: () => void) {
   root.className = "tasks-view";
@@ -18,15 +19,21 @@ export function mountTasksView(root: HTMLElement, retryRead: () => void) {
     onClick: retryRead,
   });
   const list = document.createElement("ol");
+  const tooltip = mountTooltip(
+    retryRoot.querySelector("button")!,
+    "Retry reading tasks; do not change tasks or repeat any write.",
+  );
   list.className = "task-rows";
   root.append(summary, progressRoot, issue, retryRoot, list);
   const rows = new Map<string, { row: HTMLLIElement; mark: HTMLElement; label: HTMLElement }>();
   function clear() {
+    tooltip.update();
     rows.clear();
     list.replaceChildren();
   }
   return {
     update(state: ReadState<Task[]> | null, retryable = true, emptyMessage = "") {
+      tooltip.update();
       const tasks = state?.value ?? [];
       const completed = tasks.filter((task) => task.done).length;
       summary.textContent =
@@ -74,6 +81,7 @@ export function mountTasksView(root: HTMLElement, retryRead: () => void) {
     },
     reset: clear,
     dispose() {
+      tooltip.dispose();
       progress.dispose();
       retry.dispose();
       clear();

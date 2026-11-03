@@ -10,6 +10,12 @@ import { mountDeleteDialog } from "./delete-dialog.js";
 import { mountArchiveDialog } from "./archive-dialog.js";
 import { archiveAllPrompt } from "./archive-prompt.js";
 import { inspectWorktreeDestination } from "./worktree.js";
+import {
+  actionPrompt,
+  changeWorkflowPrompt,
+  globalWorkflowPrompt,
+  type ChangeWorkflow,
+} from "./workflow.js";
 
 export function mountController(host: HostClient, appRoot: HTMLElement): () => void {
   const client = createClient(host);
@@ -120,8 +126,10 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
           operation !== boardOperation
         )
           return;
-        if (scope && scope.root !== listing.root) {
+        if (scope && (scope.root !== listing.root || scope.planning !== listing.planning)) {
+          const retainedSearch = scope.root === listing.root ? search : "";
           invalidate();
+          search = retainedSearch;
           loadBoard();
           return;
         }
@@ -268,23 +276,25 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
     })();
   }
 
-  function actionPrompt(change: DerivedChange, intent: "primary" | "verify" | "explore"): string {
-    const target = `OpenSpec change "${change.id}"`;
-    const goal = change.goal?.trim() ? `\nGoal: ${change.goal}` : "";
-    if (intent === "explore")
-      return `Use your skill tool to load and invoke the openspec-explore skill for ${target}.${goal}\n\nInvestigate the goal, relevant code, options and trade-offs for ${target}. Discuss findings without file changes or implementation. If no goal is recorded, inspect existing context and ask the user to clarify it if necessary; do not invent a goal.`;
-    if (change.stage === "planning")
-      return `Use your skill tool to load and invoke the openspec-propose skill for ${target} (existing change).${goal}\n\nInspect ${target}'s status and current metadata. Preserve existing decisions and any recorded goal; only if current metadata has no goal, establish and record a concise goal from existing change context. Ask the user for clarification if the goal is unclear. Finish planning this existing scaffold and complete missing planning artefacts using OpenSpec's artefact instructions. Do not create another change or implement code. If the skill requires new-change creation, explain the conflict rather than creating another change.`;
-    if (change.stage === "ready" || change.stage === "progress") {
-      const progress =
-        change.stage === "progress"
-          ? `\n${change.completedTasks} of ${change.totalTasks} tasks complete. Pick up where implementation left off and complete the remaining tasks.`
-          : "";
-      return `Use your skill tool to load and invoke the openspec-apply-change skill for ${target}.${progress}\n\nComplete all remaining tasks in ${target}, then verify the implementation against its change artefacts. Resolve any issues found and verify again until all tasks are complete and verification passes. If blocked, report the blocker rather than marking unfinished work complete.`;
-    }
-    if (intent === "verify")
-      return `Use your skill tool to load and invoke the openspec-verify-change skill for ${target}.`;
-    return `Use your skill tool to load and invoke the openspec-archive-change skill for ${target}.`;
+  async function prepareChangeWorkflow(
+    workflow: ChangeWorkflow,
+    change: DerivedChange,
+    captured: Scope | null,
+    originatingEpoch: number,
+    originatingSession: string | null,
+    detail = false,
+  ) {
+    const current = () =>
+      !disposed &&
+      !!captured &&
+      scope === captured &&
+      epoch === originatingEpoch &&
+      directory === captured.directory &&
+      sessionId === originatingSession &&
+      !unavailableIds.has(change.id) &&
+      changes.some((item) => item.id === change.id) &&
+      (!detail || selectedChange?.id === change.id);
+    await composePrompt(changeWorkflowPrompt(workflow, change), current);
   }
 
   async function preparePrompt(
@@ -313,15 +323,23 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
       return;
     }
     const expectedSession = sessionId;
+    await composePrompt(
+      actionPrompt(change, intent),
+      () => scope === captured && epoch === originatingEpoch && sessionId === expectedSession,
+    );
+  }
+
+  async function composePrompt(text: string, current: () => boolean) {
+    if (!current()) return;
     try {
-      await host.compose({ text: actionPrompt(change, intent), mode: "replace" });
-      if (scope !== captured || epoch !== originatingEpoch || sessionId !== expectedSession) return;
+      await host.compose({ text, mode: "replace" });
+      if (!current()) return;
       await host.toast({
         kind: "success",
         message: "Workflow prompt prepared in the open composer.",
       });
     } catch (caught) {
-      if (scope !== captured || epoch !== originatingEpoch || sessionId !== expectedSession) return;
+      if (!current()) return;
       await host.toast({
         kind: "error",
         message:
@@ -800,8 +818,20 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
     archiveView.update();
     const captured = scope;
     const originatingEpoch = epoch;
+    const originatingDirectory = directory;
     boardView.update({
       directory,
+      workflow: (workflow) =>
+        void composePrompt(
+          globalWorkflowPrompt(workflow),
+          () =>
+            !!originatingDirectory &&
+            !disposed &&
+            directory === originatingDirectory &&
+            scope === captured &&
+            epoch === originatingEpoch &&
+            sessionId === originatingSession,
+        ),
       canCreate: !!scope,
       canArchive: canArchive(),
       archivePending,
@@ -827,6 +857,14 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
           ),
         action: (intent) =>
           void preparePrompt(change, captured, originatingEpoch, intent, originatingSession),
+        workflow: (workflow) =>
+          void prepareChangeWorkflow(
+            workflow,
+            change,
+            captured,
+            originatingEpoch,
+            originatingSession,
+          ),
       })),
     });
     boardView.setVisible(!selectedChange);
@@ -853,6 +891,17 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
                   originatingEpoch,
                   intent,
                   originatingSession,
+                );
+            },
+            workflow: (workflow) => {
+              if (detailChange)
+                void prepareChangeWorkflow(
+                  workflow,
+                  detailChange,
+                  captured,
+                  originatingEpoch,
+                  originatingSession,
+                  true,
                 );
             },
           }

@@ -1,6 +1,7 @@
 import { mountButton } from "@openchamber/sdk/ui";
 import { ServiceRequestError, type Client, type Scope } from "./client.js";
 import { addButtonIcon } from "./button-icon.js";
+import { mountTooltip } from "./help-button.js";
 
 type Target = { scope: Scope; epoch: number; selection: number; name: string };
 
@@ -51,7 +52,7 @@ export function mountDeleteDialog(
     message.textContent = "";
   }
   const cancel = mountButton(cancelRoot, {
-    label: "cancel",
+    label: "Cancel",
     variant: "secondary",
     size: "sm",
     onClick: () => {
@@ -67,7 +68,7 @@ export function mountDeleteDialog(
     },
   });
   const confirm = mountButton(deleteRoot, {
-    label: "delete",
+    label: "Delete",
     variant: "destructive",
     size: "sm",
     onClick: () => {
@@ -76,15 +77,30 @@ export function mountDeleteDialog(
   });
   addButtonIcon(deleteRoot, "delete");
   actions.append(cancelRoot, retryRoot, deleteRoot);
+  const tooltips = [
+    mountTooltip(
+      cancelRoot.querySelector("button")!,
+      "Close this confirmation without removing the change.",
+    ),
+    mountTooltip(
+      retryRoot.querySelector("button")!,
+      "Read the original project to resolve the deletion outcome; do not retry deletion.",
+    ),
+    mountTooltip(
+      deleteRoot.querySelector("button")!,
+      "Permanently remove this change's planning folder; implementation and main specifications remain.",
+    ),
+  ];
   dialog.append(heading, description, message, actions);
   root.append(dialog);
   function display() {
+    tooltips.forEach((tooltip) => tooltip.update());
     message.hidden = !message.textContent;
     retryRoot.hidden = mode !== "unresolved";
     deleteRoot.hidden = mode !== "confirming" && mode !== "deleting";
     cancel.update({
       disabled: mode === "deleting" || mode === "reconciling" || mode === "unresolved",
-      label: mode === "present" ? "Close" : "cancel",
+      label: mode === "present" ? "Close" : "Cancel",
     });
     confirm.update({ disabled: mode !== "confirming", loading: mode === "deleting" });
   }
@@ -182,6 +198,7 @@ export function mountDeleteDialog(
       }
     },
     dispose() {
+      tooltips.forEach((tooltip) => tooltip.dispose());
       disposed = true;
       dialog.close();
       cancel.dispose();

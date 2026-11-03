@@ -2199,78 +2199,253 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   }
 
   // src/panel/workflow.ts
+  var globalWorkflows = [
+    {
+      id: "propose",
+      label: "Propose change",
+      skill: "openspec-propose",
+      description: "Prepare an unsent prompt to define a new change and its planning artifacts."
+    },
+    {
+      id: "explore",
+      label: "Explore ideas",
+      skill: "openspec-explore",
+      description: "Prepare an unsent prompt to investigate ideas and trade-offs without file changes."
+    },
+    {
+      id: "new",
+      label: "New change",
+      skill: "openspec-new-change",
+      description: "Prepare an unsent prompt to start a new change step by step."
+    },
+    {
+      id: "ff",
+      label: "Fast-forward",
+      skill: "openspec-ff-change",
+      description: "Prepare an unsent prompt to create all planning artifacts for a new change."
+    },
+    {
+      id: "bulk-archive",
+      label: "Bulk archive",
+      skill: "openspec-bulk-archive-change",
+      description: "Prepare an unsent prompt to select changes, assess conflicts and confirm batch archiving."
+    },
+    {
+      id: "onboard",
+      label: "Onboard",
+      skill: "openspec-onboard",
+      description: "Prepare an unsent prompt for a guided full change cycle, with setup and task questions."
+    }
+  ];
+  function globalWorkflowPrompt(workflow) {
+    const { skill } = globalWorkflows.find(({ id }) => id === workflow);
+    const instruction = workflow === "bulk-archive" ? "Leave candidate selection, conflict assessment and batch confirmation to the workflow; do not preselect visible or completed changes." : workflow === "onboard" ? "Leave setup permission and onboarding task selection to the workflow and its user questions." : workflow === "explore" ? "Ask the user what ideas to explore. Investigate relevant context, options and trade-offs without file changes or implementation." : "Ask the user to establish their intended change; do not target or finish an existing change's scaffold.";
+    return `Use your skill tool to load and invoke the ${skill} skill.
+
+${instruction} Preserve the workflow's setup checks and required user questions. If the skill is unavailable, report that limitation rather than substituting another workflow.`;
+  }
+  var changeWorkflows = [
+    {
+      id: "continue",
+      label: "Continue change",
+      skill: "openspec-continue-change",
+      description: "Prepare an unsent prompt for at most one next planning artifact, not implementation."
+    },
+    {
+      id: "apply",
+      label: "Apply tasks",
+      skill: "openspec-apply-change",
+      description: "Prepare an unsent current-chat prompt to implement and verify remaining tasks."
+    },
+    {
+      id: "update",
+      label: "Update change",
+      skill: "openspec-update-change",
+      description: "Prepare an unsent prompt to revise planning artifacts without implementing tasks."
+    },
+    {
+      id: "sync",
+      label: "Sync specs",
+      skill: "openspec-sync-specs",
+      description: "Prepare an unsent prompt to synchronize delta specs with main specs without archiving."
+    },
+    {
+      id: "archive",
+      label: "Archive change",
+      skill: "openspec-archive-change",
+      description: "Prepare an unsent prompt to check archival prerequisites and request confirmation."
+    },
+    {
+      id: "verify",
+      label: "Verify change",
+      skill: "openspec-verify-change",
+      description: "Prepare an unsent prompt to report gaps against planning artifacts without fixing or archiving."
+    },
+    {
+      id: "explore",
+      label: "Explore ideas",
+      skill: "openspec-explore",
+      description: "Prepare an unsent prompt to investigate this change and trade-offs without file changes."
+    }
+  ];
+  function changeWorkflowPrompt(workflow, change) {
+    const target = `OpenSpec change "${change.id}"`;
+    const goal = change.goal?.trim() ? `
+Goal: ${change.goal}` : "";
+    const { skill } = changeWorkflows.find(({ id }) => id === workflow);
+    const invocation = `Use your skill tool to load and invoke the ${skill} skill for ${target}.`;
+    switch (workflow) {
+      case "continue":
+        return `${invocation}${goal}
+
+Inspect this existing change's status and follow the workflow's artefact instructions to create at most one next planning artefact. Preserve existing decisions and any recorded goal. If no goal is recorded, inspect existing context and ask the user to clarify it if necessary; do not invent a goal or write goal metadata automatically. Do not create another change or implement code. Leave complete planning and partially populated artefacts to the workflow; do not automatically Apply.`;
+      case "explore":
+        return `${invocation}${goal}
+
+Investigate the goal, relevant code, options and trade-offs for ${target}. Discuss findings without file changes or implementation. If no goal is recorded, inspect existing context and ask the user to clarify it if necessary; do not invent a goal.`;
+      case "apply": {
+        const progress = change.stage === "progress" ? `
+${change.completedTasks} of ${change.totalTasks} tasks complete. Pick up where implementation left off and complete the remaining tasks.` : "";
+        return `${invocation}${progress}
+
+Complete all remaining tasks in ${target}, then verify the implementation against its change artefacts. Resolve any issues found and verify again until all tasks are complete and verification passes. If blocked, report the blocker rather than marking unfinished work complete.`;
+      }
+      case "update":
+        return `${invocation}
+
+Review and revise this change's planning artefacts, preserving existing decisions and the recorded goal. Retain the workflow's required user confirmations. Do not implement tasks or archive the change.`;
+      case "sync":
+        return `${invocation}
+
+Synchronize this change's delta specs with the main specs using the workflow's prerequisite checks and required user questions. Do not implement tasks or archive the change afterward.`;
+      case "verify":
+        return `${invocation}
+
+Compare the implementation with this change's planning artefacts and report gaps and inconsistencies diagnostically, without implementation or archiving.`;
+      case "archive":
+        return `${invocation}
+
+Check the workflow's archival prerequisites and retain required user confirmations; do not assume prior verification or permission to archive.`;
+    }
+  }
+  function actionPrompt(change, intent) {
+    if (intent !== "primary") return changeWorkflowPrompt(intent, change);
+    const workflow = change.stage === "planning" ? "continue" : change.stage === "complete" ? "archive" : "apply";
+    return changeWorkflowPrompt(workflow, change);
+  }
   var stages = [
-    { id: "planning", label: "Planning", action: "propose" },
-    { id: "ready", label: "Ready", action: "apply" },
-    { id: "progress", label: "In Progress", action: "continue" },
-    { id: "complete", label: "Complete", action: "archive" }
+    { id: "planning", label: "Planning", action: "Continue artifacts" },
+    { id: "ready", label: "Ready", action: "Apply" },
+    { id: "progress", label: "In Progress", action: "Apply" },
+    { id: "complete", label: "Complete", action: "Archive" }
   ];
   var workflowLabel = (stage) => stages.find((item) => item.id === stage).action;
   var stageLabel = (stage) => stages.find((item) => item.id === stage).label;
 
-  // src/panel/primary-action.ts
-  function mountPrimaryAction(root2) {
-    const buttonRoot = document.createElement("span");
-    const menuRoot = document.createElement("span");
-    root2.append(buttonRoot, menuRoot);
-    let state = null;
-    let opened = null;
-    const button2 = mountButton(buttonRoot, {
-      label: "propose",
-      size: "sm",
-      onClick: () => state?.action("primary")
-    });
-    const menu = mountMenu(menuRoot, {
-      label: "apply",
-      size: "sm",
-      variant: "default",
-      items: [],
-      onSelect: (id) => {
-        const captured = opened;
-        opened = null;
-        if (!captured || captured.disabled || state?.disabled || captured.id !== state?.id || captured.stage !== state?.stage || id === "worktree" && state?.pending)
-          return;
-        captured.action(id === "worktree" ? "worktree" : "primary");
-      }
-    });
-    const trigger = menuRoot.querySelector("button");
-    const capture = () => {
-      if (trigger.getAttribute("aria-expanded") !== "true") opened = state;
+  // src/panel/help-button.ts
+  var tooltipId = 0;
+  var dismissTooltip = null;
+  var overTooltip = null;
+  function mountTooltip(button2, text2) {
+    const id = `button-outcome-${++tooltipId}`;
+    let tooltip = null;
+    const usable = () => button2.isConnected && !button2.disabled && button2.checkVisibility() && !Array.from(document.querySelectorAll('.workflow-menu [role="menu"]')).some(
+      (menu) => menu.checkVisibility()
+    );
+    const containsPointer = (event) => {
+      const box = tooltip?.getBoundingClientRect();
+      return !!box && event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
     };
-    trigger.addEventListener("click", capture, true);
+    let observer = null;
+    function hide() {
+      if (dismissTooltip === hide) {
+        dismissTooltip = null;
+        overTooltip = null;
+      }
+      document.removeEventListener("keydown", escape2);
+      document.removeEventListener("pointermove", leave);
+      document.removeEventListener("pointerdown", hide, true);
+      window.removeEventListener("resize", hide);
+      window.removeEventListener("scroll", hide, true);
+      observer?.disconnect();
+      observer = null;
+      tooltip?.remove();
+      tooltip = null;
+      const ids = (button2.getAttribute("aria-describedby") ?? "").split(/\s+/).filter((item) => item && item !== id);
+      if (ids.length) button2.setAttribute("aria-describedby", ids.join(" "));
+      else button2.removeAttribute("aria-describedby");
+    }
+    function show(event) {
+      if (tooltip || !usable()) return;
+      if (event instanceof PointerEvent && overTooltip?.(event)) return;
+      dismissTooltip?.();
+      dismissTooltip = hide;
+      overTooltip = containsPointer;
+      tooltip = document.createElement("div");
+      tooltip.id = id;
+      tooltip.className = "button-tooltip";
+      tooltip.setAttribute("role", "tooltip");
+      tooltip.textContent = text2;
+      (button2.closest("dialog") ?? document.body).append(tooltip);
+      button2.setAttribute(
+        "aria-describedby",
+        [button2.getAttribute("aria-describedby"), id].filter(Boolean).join(" ")
+      );
+      const anchor = button2.getBoundingClientRect();
+      const box = tooltip.getBoundingClientRect();
+      tooltip.style.left = `${Math.max(4, Math.min(anchor.left, innerWidth - box.width - 4))}px`;
+      const top = anchor.top - box.height >= 4 ? anchor.top - box.height : anchor.bottom;
+      tooltip.style.top = `${Math.max(4, Math.min(top, innerHeight - box.height - 4))}px`;
+      observer = new MutationObserver(() => {
+        if (!usable()) hide();
+      });
+      observer.observe(document.body, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["hidden", "disabled", "open", "style", "class"]
+      });
+      document.addEventListener("keydown", escape2);
+      document.addEventListener("pointermove", leave);
+      document.addEventListener("pointerdown", hide, true);
+      window.addEventListener("resize", hide);
+      window.addEventListener("scroll", hide, true);
+    }
+    function leave(event) {
+      if (containsPointer(event)) return;
+      if (event.type === "pointermove" && event.target instanceof Node && button2.contains(event.target))
+        return;
+      hide();
+    }
+    const escape2 = (event) => {
+      if (event.key === "Escape") hide();
+    };
+    button2.addEventListener("pointermove", show);
+    button2.addEventListener("pointerleave", leave);
+    button2.addEventListener("focus", show);
+    button2.addEventListener("blur", hide);
+    button2.addEventListener("click", hide, true);
     return {
-      update(next) {
-        state = next;
-        const apply3 = next.stage === "ready" || next.stage === "progress";
-        buttonRoot.hidden = apply3;
-        menuRoot.hidden = !apply3;
-        button2.update({ label: workflowLabel(next.stage), disabled: next.disabled });
-        menu.update({
-          items: [
-            { id: "current", label: "Prepare in current chat", disabled: next.disabled },
-            { id: "worktree", label: "Run in new worktree", disabled: next.disabled || next.pending }
-          ]
-        });
-        trigger.disabled = next.disabled;
+      update(next = text2) {
+        if (next !== text2 || !usable()) hide();
+        text2 = next;
       },
       dispose() {
-        trigger.removeEventListener("click", capture, true);
-        menu.dispose();
-        button2.dispose();
-        buttonRoot.remove();
-        menuRoot.remove();
-        opened = state = null;
+        hide();
+        button2.removeEventListener("pointermove", show);
+        button2.removeEventListener("pointerleave", leave);
+        button2.removeEventListener("focus", show);
+        button2.removeEventListener("blur", hide);
+        button2.removeEventListener("click", hide, true);
       }
     };
   }
-
-  // src/panel/help-button.ts
   function mountHelpButton(root2, onClick) {
     root2.className = "help-control";
     const handle = mountButton(root2, { label: "", variant: "ghost", size: "sm", onClick });
     const button2 = root2.querySelector("button");
     button2.setAttribute("aria-label", "OpenSpec quickstart");
-    button2.title = "OpenSpec quickstart";
+    const tooltip = mountTooltip(button2, "Open the OpenSpec quickstart guide.");
     const icon2 = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     icon2.setAttribute("viewBox", "0 0 24 24");
     icon2.setAttribute("width", "16");
@@ -2296,7 +2471,164 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     dot.setAttribute("fill", "currentColor");
     icon2.append(outline, hook, dot);
     button2.prepend(icon2);
-    return handle;
+    return {
+      dispose() {
+        tooltip.dispose();
+        handle.dispose();
+      }
+    };
+  }
+
+  // src/panel/primary-action.ts
+  function mountWorkflowMenu(root2, items) {
+    root2.classList.add("workflow-menu");
+    let state = null;
+    let opened = null;
+    const menu = mountMenu(root2, {
+      label: "Workflows",
+      size: "sm",
+      variant: "secondary",
+      items: [],
+      onSelect: (id) => {
+        const captured = opened;
+        opened = null;
+        const item = items.find((item2) => item2.id === id);
+        if (captured && !captured.disabled && !state?.disabled && item) captured.action(item.id);
+      }
+    });
+    const trigger = root2.querySelector("button");
+    let pointer = null;
+    const rememberPointer = (event) => {
+      pointer = { x: event.clientX, y: event.clientY };
+    };
+    const stationaryEntry = (event) => {
+      if (event.target instanceof HTMLElement && event.target.getAttribute("role") === "menuitem" && pointer?.x === event.clientX && pointer.y === event.clientY)
+        event.stopPropagation();
+    };
+    document.addEventListener("pointermove", rememberPointer);
+    root2.addEventListener("pointerenter", stationaryEntry, true);
+    const descriptions = new MutationObserver(() => {
+      const popup = root2.querySelector('[role="menu"]');
+      if (!popup) return;
+      popup.querySelectorAll('[role="menuitem"]').forEach((row, index) => {
+        const item = items[index];
+        let description = row.querySelector(".workflow-description");
+        if (!description) {
+          row.setAttribute("aria-label", item.label);
+          description = document.createElement("span");
+          description.className = "workflow-description";
+          description.id = `${row.id}-outcome`;
+          description.setAttribute("role", "tooltip");
+          description.textContent = item.description;
+          row.append(description);
+        }
+        if (row.dataset.active === "true") row.setAttribute("aria-describedby", description.id);
+        else row.removeAttribute("aria-describedby");
+      });
+      const active2 = popup.querySelector('[data-active="true"]');
+      if (active2) popup.setAttribute("aria-describedby", `${active2.id}-outcome`);
+      else popup.removeAttribute("aria-describedby");
+      popup.style.maxHeight = `min(320px, calc(100vh - ${popup.getBoundingClientRect().top + 8}px))`;
+      active2?.scrollIntoView({ block: "nearest" });
+    });
+    descriptions.observe(root2, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["aria-activedescendant"]
+    });
+    const tooltip = mountTooltip(
+      trigger,
+      "Choose a workflow to prepare an editable, unsent prompt in the current chat."
+    );
+    const capture = () => {
+      if (trigger.getAttribute("aria-expanded") !== "true") opened = state;
+    };
+    trigger.addEventListener("click", capture, true);
+    return {
+      update(next) {
+        state = next;
+        menu.update({
+          items: items.map(({ id, label }) => ({ id, label, disabled: next.disabled }))
+        });
+        trigger.disabled = next.disabled;
+        tooltip.update();
+      },
+      dispose() {
+        descriptions.disconnect();
+        document.removeEventListener("pointermove", rememberPointer);
+        root2.removeEventListener("pointerenter", stationaryEntry, true);
+        trigger.removeEventListener("click", capture, true);
+        menu.dispose();
+        tooltip.dispose();
+        opened = state = null;
+      }
+    };
+  }
+  function mountPrimaryAction(root2) {
+    const buttonRoot = document.createElement("span");
+    const menuRoot = document.createElement("span");
+    root2.append(buttonRoot, menuRoot);
+    let state = null;
+    let opened = null;
+    const button2 = mountButton(buttonRoot, {
+      label: workflowLabel("planning"),
+      size: "sm",
+      onClick: () => state?.action("primary")
+    });
+    const menu = mountMenu(menuRoot, {
+      label: "Apply",
+      size: "sm",
+      variant: "default",
+      items: [],
+      onSelect: (id) => {
+        const captured = opened;
+        opened = null;
+        if (!captured || captured.disabled || state?.disabled || captured.id !== state?.id || captured.stage !== state?.stage || id === "worktree" && state?.pending)
+          return;
+        captured.action(id === "worktree" ? "worktree" : "primary");
+      }
+    });
+    const trigger = menuRoot.querySelector("button");
+    const tooltip = mountTooltip(buttonRoot.querySelector("button"), "");
+    const menuTooltip = mountTooltip(
+      trigger,
+      "Choose an unsent current-chat draft or explicitly create a worktree and session and send the Apply prompt."
+    );
+    const capture = () => {
+      if (trigger.getAttribute("aria-expanded") !== "true") opened = state;
+    };
+    trigger.addEventListener("click", capture, true);
+    return {
+      update(next) {
+        state = next;
+        tooltip.update(
+          next.stage === "planning" ? "Prepare an editable, unsent prompt for at most one next planning artifact; do not implement tasks." : "Prepare an editable, unsent archive prompt in the current chat; this does not archive directly."
+        );
+        menuTooltip.update();
+        const apply3 = next.stage === "ready" || next.stage === "progress";
+        buttonRoot.hidden = apply3;
+        menuRoot.hidden = !apply3;
+        button2.update({ label: workflowLabel(next.stage), disabled: next.disabled });
+        menu.update({
+          items: [
+            { id: "current", label: "Prepare in current chat", disabled: next.disabled },
+            { id: "worktree", label: "Run in new worktree", disabled: next.disabled || next.pending }
+          ]
+        });
+        trigger.disabled = next.disabled;
+      },
+      dispose() {
+        trigger.removeEventListener("click", capture, true);
+        menu.dispose();
+        button2.dispose();
+        tooltip.dispose();
+        menuTooltip.dispose();
+        buttonRoot.remove();
+        menuRoot.remove();
+        opened = state = null;
+      }
+    };
   }
 
   // src/panel/button-icon.ts
@@ -2371,7 +2703,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     headingActions.className = "heading-actions";
     const newChangeRoot = document.createElement("span");
     const newChange = mountButton(newChangeRoot, {
-      label: "new change",
+      label: "Create scaffold\u2026",
       variant: "default",
       size: "sm",
       disabled: true,
@@ -2380,7 +2712,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     addButtonIcon(newChangeRoot, "create");
     const archiveRoot = document.createElement("span");
     const archive = mountButton(archiveRoot, {
-      label: "archive all",
+      label: "Archive all",
       variant: "secondary",
       size: "sm",
       disabled: true,
@@ -2396,7 +2728,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     const refreshRoot = document.createElement("span");
     refreshRoot.className = "refresh-control";
     const refresh = mountButton(refreshRoot, {
-      label: "refresh",
+      label: "Refresh",
       variant: "ghost",
       size: "sm",
       onClick: callbacks.retry
@@ -2404,7 +2736,23 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     addButtonIcon(refreshRoot, "refresh");
     const helpRoot = document.createElement("span");
     const help = mountHelpButton(helpRoot, callbacks.help);
-    headingActions.append(helpRoot, refreshRoot, archiveRoot, newChangeRoot);
+    const tooltips = [
+      mountTooltip(
+        newChangeRoot.querySelector("button"),
+        "Open a form that directly creates a scaffold with its name and goal; no agent prompt is sent."
+      ),
+      mountTooltip(
+        archiveRoot.querySelector("button"),
+        "Open confirmation to create a new session and submit an archive prompt for completed changes only; unfinished changes are skipped."
+      ),
+      mountTooltip(
+        refreshRoot.querySelector("button"),
+        "Read the latest board state without changing files."
+      )
+    ];
+    const workflowRoot = document.createElement("span");
+    const workflows = mountWorkflowMenu(workflowRoot, globalWorkflows);
+    headingActions.append(helpRoot, refreshRoot, workflowRoot, archiveRoot, newChangeRoot);
     const searchRoot = document.createElement("span");
     searchRoot.className = "board-search";
     let searchValue = "";
@@ -2446,9 +2794,22 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     function addAction(target, label) {
       const mount = document.createElement("span");
       target.append(mount);
-      noticesMounted.push(
-        mountButton(mount, { label, variant: "secondary", size: "sm", onClick: callbacks.retry })
+      const button2 = mountButton(mount, {
+        label,
+        variant: "secondary",
+        size: "sm",
+        onClick: callbacks.retry
+      });
+      const tooltip = mountTooltip(
+        mount.querySelector("button"),
+        "Retry reading the board; do not repeat any write."
       );
+      noticesMounted.push({
+        dispose() {
+          tooltip.dispose();
+          button2.dispose();
+        }
+      });
     }
     function cardFor(item) {
       let entry = cards.get(item.change.id);
@@ -2468,19 +2829,22 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         const action = mountPrimaryAction(actionRoot);
         const exploreRoot = document.createElement("span");
         const explore = mountButton(exploreRoot, {
-          label: "explore",
+          label: "Explore",
           variant: "secondary",
           size: "sm",
           onClick: () => cards.get(id)?.current.action("explore")
         });
         const verifyRoot = document.createElement("span");
         const verify = mountButton(verifyRoot, {
-          label: "verify",
+          label: "Verify",
           variant: "secondary",
           size: "sm",
           onClick: () => cards.get(id)?.current.action("verify")
         });
         actionRoot.prepend(exploreRoot, verifyRoot);
+        const workflowRoot2 = document.createElement("span");
+        const workflows2 = mountWorkflowMenu(workflowRoot2, changeWorkflows);
+        actionRoot.append(workflowRoot2);
         title.addEventListener("click", () => cards.get(id)?.current.open());
         const status = document.createElement("p");
         status.className = "stale-label";
@@ -2488,6 +2852,17 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         const areas = mountAreaBadges(node);
         node.append(progressLabel, progressRoot, actionRoot, status);
         entry = {
+          tooltips: [
+            mountTooltip(title, "Open this change's planning documents and tasks."),
+            mountTooltip(
+              exploreRoot.querySelector("button"),
+              "Prepare an editable, unsent exploration prompt without file changes."
+            ),
+            mountTooltip(
+              verifyRoot.querySelector("button"),
+              "Prepare an editable, unsent diagnostic verification prompt; do not implement or archive."
+            )
+          ],
           node,
           title,
           areas,
@@ -2495,6 +2870,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
           progressRoot,
           progress,
           action,
+          workflows: workflows2,
           explore,
           exploreRoot,
           verify,
@@ -2505,6 +2881,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         cards.set(id, entry);
       }
       entry.current = item;
+      entry.tooltips.forEach((tooltip) => tooltip.update());
       const change = item.change;
       if (entry.title.textContent !== change.id) entry.title.textContent = change.id;
       entry.areas.update(change.affectedAreas);
@@ -2523,6 +2900,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         action: item.action
       });
       entry.explore.update({ disabled: item.unavailable });
+      entry.workflows.update({ disabled: item.unavailable, action: item.workflow });
       entry.exploreRoot.hidden = change.stage !== "planning";
       entry.verifyRoot.hidden = change.stage !== "complete";
       entry.verify.update({ disabled: item.unavailable });
@@ -2535,8 +2913,11 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     return {
       setVisible(visible) {
         main.hidden = !visible;
+        tooltips.forEach((tooltip) => tooltip.update());
       },
       update(state) {
+        tooltips.forEach((tooltip) => tooltip.update());
+        workflows.update({ disabled: !state.directory, action: state.workflow });
         project.textContent = state.directory?.split("/").filter(Boolean).at(-1) ?? "No project selected";
         newChange.update({ disabled: !state.canCreate });
         archive.update({ disabled: !state.canArchive, loading: state.archivePending });
@@ -2585,6 +2966,8 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         for (const [id, entry] of cards) {
           if (ids.has(id)) continue;
           entry.action.dispose();
+          entry.tooltips.forEach((tooltip) => tooltip.dispose());
+          entry.workflows.dispose();
           entry.explore.dispose();
           entry.verify.dispose();
           entry.progress.dispose();
@@ -2618,9 +3001,12 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         }
       },
       dispose() {
+        tooltips.forEach((tooltip) => tooltip.dispose());
         noticesMounted.forEach((handle) => handle.dispose());
         for (const entry of cards.values()) {
+          entry.tooltips.forEach((tooltip) => tooltip.dispose());
           entry.action.dispose();
+          entry.workflows.dispose();
           entry.explore.dispose();
           entry.verify.dispose();
           entry.progress.dispose();
@@ -2628,6 +3014,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         }
         cards.clear();
         newChange.dispose();
+        workflows.dispose();
         archive.dispose();
         refresh.dispose();
         help.dispose();
@@ -6063,11 +6450,16 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       onClick: () => onRetry()
     });
     root2.append(content, presentationIssue, status, issue, retryRoot);
+    const tooltip = mountTooltip(
+      retryRoot.querySelector("button"),
+      "Retry reading this document; do not repeat any write."
+    );
     let displayed = null;
     let format = null;
     let renderingFailed = false;
     return {
       update(next) {
+        tooltip.update();
         if (next.hasContent && (displayed !== next.text || format !== (next.format ?? "text"))) {
           renderingFailed = false;
           try {
@@ -6087,7 +6479,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           displayed = next.text;
           format = next.format ?? "text";
         }
-        content.hidden = !next.hasContent;
+        const hasContent = next.hasContent || displayed !== null && !!next.status && !next.error;
+        content.hidden = !hasContent;
         presentationIssue.hidden = !next.hasContent || !renderingFailed;
         status.textContent = next.status ?? "";
         status.hidden = !next.status;
@@ -6098,6 +6491,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         retry.update({ disabled: !next.canRetry });
       },
       dispose() {
+        tooltip.dispose();
         content.removeEventListener("click", onLink);
         content.removeEventListener("auxclick", onLink);
         retry.dispose();
@@ -6123,15 +6517,21 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       onClick: retryRead
     });
     const list = document.createElement("ol");
+    const tooltip = mountTooltip(
+      retryRoot.querySelector("button"),
+      "Retry reading tasks; do not change tasks or repeat any write."
+    );
     list.className = "task-rows";
     root2.append(summary, progressRoot, issue, retryRoot, list);
     const rows = /* @__PURE__ */ new Map();
     function clear() {
+      tooltip.update();
       rows.clear();
       list.replaceChildren();
     }
     return {
       update(state, retryable = true, emptyMessage = "") {
+        tooltip.update();
         const tasks = state?.value ?? [];
         const completed = tasks.filter((task) => task.done).length;
         summary.textContent = tasks.length || state?.error || !retryable ? "" : state?.pending ? "Loading tasks\u2026" : emptyMessage || "No tasks tracked yet.";
@@ -6174,6 +6574,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       },
       reset: clear,
       dispose() {
+        tooltip.dispose();
         progress.dispose();
         retry.dispose();
         clear();
@@ -6240,7 +6641,6 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     chevron.append(path);
     backButton.prepend(chevron);
     backButton.setAttribute("aria-label", "Back to changes");
-    backButton.title = "Back to changes";
     const title = document.createElement("h1");
     title.id = "change-detail-title";
     shell.setAttribute("aria-labelledby", title.id);
@@ -6258,7 +6658,6 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     });
     const copyButton = copyRoot.querySelector("button");
     copyButton.setAttribute("aria-label", "Copy change name");
-    copyButton.title = "Copy change name";
     addButtonIcon(copyRoot, "copy");
     nameGroup.append(title, copyRoot);
     titleGroup.append(nameGroup);
@@ -6269,7 +6668,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     const refreshRoot = document.createElement("span");
     refreshRoot.className = "refresh-control";
     const refresh = mountButton(refreshRoot, {
-      label: "refresh",
+      label: "Refresh",
       variant: "ghost",
       size: "sm",
       onClick: callbacks.refresh
@@ -6278,14 +6677,13 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     const deleteRoot = document.createElement("span");
     deleteRoot.className = "detail-delete";
     const deleteAction = mountButton(deleteRoot, {
-      label: "delete",
+      label: "Delete",
       variant: "destructive",
       size: "sm",
       onClick: callbacks.delete
     });
     const deleteButton = deleteRoot.querySelector("button");
     deleteButton.setAttribute("aria-label", "Delete change");
-    deleteButton.title = "Delete change";
     addButtonIcon(deleteRoot, "delete");
     headingActions.append(refreshRoot, deleteRoot);
     const goal = document.createElement("p");
@@ -6334,19 +6732,45 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     const action = mountPrimaryAction(actionRoot);
     const verifyRoot = document.createElement("span");
     const verify = mountButton(verifyRoot, {
-      label: "verify",
+      label: "Verify",
       variant: "secondary",
       size: "sm",
       onClick: () => callbacks.action("verify")
     });
     const exploreRoot = document.createElement("span");
     const explore = mountButton(exploreRoot, {
-      label: "explore",
+      label: "Explore",
       variant: "secondary",
       size: "sm",
       onClick: () => callbacks.action("explore")
     });
-    footer.append(exploreRoot, verifyRoot, actionRoot);
+    const workflowRoot = document.createElement("span");
+    const workflows = mountWorkflowMenu(workflowRoot, changeWorkflows);
+    const tooltips = [
+      mountTooltip(backButton, "Return to the changes board."),
+      mountTooltip(copyButton, "Copy this change's name to the clipboard."),
+      mountTooltip(
+        refreshRoot.querySelector("button"),
+        "Read the latest change, document and task state without changing files."
+      ),
+      mountTooltip(
+        deleteButton,
+        "Open confirmation before permanently removing this change's planning folder."
+      ),
+      mountTooltip(
+        retryRoot.querySelector("button"),
+        "Retry reading this change; do not repeat any write."
+      ),
+      mountTooltip(
+        exploreRoot.querySelector("button"),
+        "Prepare an editable, unsent exploration prompt without file changes."
+      ),
+      mountTooltip(
+        verifyRoot.querySelector("button"),
+        "Prepare an editable, unsent diagnostic verification prompt; do not implement or archive."
+      )
+    ];
+    footer.append(exploreRoot, verifyRoot, actionRoot, workflowRoot);
     body.append(toolbar, unavailable, refreshIssue, content);
     shell.append(header, body, footer);
     root2.append(shell);
@@ -6404,8 +6828,11 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     }
     return {
       update(state) {
+        tooltips.forEach((tooltip) => tooltip.update());
         shell.hidden = !state;
         if (!state) {
+          workflows.update({ disabled: true, action: () => {
+          } });
           reset();
           changeId = "";
           return;
@@ -6435,6 +6862,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           action: state.primaryAction
         });
         exploreRoot.hidden = state.change.stage !== "planning";
+        workflows.update({ disabled: state.unavailable, action: state.workflow });
         explore.update({ disabled: state.unavailable });
         deleteAction.update({ disabled: state.unavailable });
         verifyRoot.hidden = state.change.stage !== "complete";
@@ -6526,6 +6954,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         }
       },
       dispose() {
+        tooltips.forEach((tooltip) => tooltip.dispose());
         reset();
         back.dispose();
         copy.dispose();
@@ -6535,6 +6964,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         stageBadge.dispose();
         areas.dispose();
         action.dispose();
+        workflows.dispose();
         explore.dispose();
         verify.dispose();
         tabControl.dispose();
@@ -6593,13 +7023,13 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     const inspectRoot = document.createElement("span");
     const forgetRoot = document.createElement("span");
     const dismiss = mountButton(cancelRoot, {
-      label: "cancel",
+      label: "Cancel",
       variant: "secondary",
       size: "sm",
       onClick: () => dialog.close()
     });
     const submit = mountButton(submitRoot, {
-      label: "create",
+      label: "Create",
       variant: "default",
       size: "sm",
       onClick: () => void submitChange()
@@ -6647,6 +7077,28 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       }
     });
     actions2.append(cancelRoot, forgetRoot, retryRoot, inspectRoot, submitRoot);
+    const tooltips = [
+      mountTooltip(
+        cancelRoot.querySelector("button"),
+        "Close this form without creating another scaffold."
+      ),
+      mountTooltip(
+        submitRoot.querySelector("button"),
+        "Directly create the named scaffold and recorded goal in the original project; no agent is launched."
+      ),
+      mountTooltip(
+        retryRoot.querySelector("button"),
+        "Read the original project to check the uncertain creation outcome; do not retry creation."
+      ),
+      mountTooltip(
+        inspectRoot.querySelector("button"),
+        "Open the observed change for inspection; this does not confirm that creation succeeded."
+      ),
+      mountTooltip(
+        forgetRoot.querySelector("button"),
+        "Dismiss this attempt without retrying creation or removing any existing change."
+      )
+    ];
     form.append(heading, nameRoot, goalRoot, message, actions2);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -6670,6 +7122,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       if (!attempt && draftScope && !sameContext(draftScope)) discardDraft();
     });
     function paint() {
+      tooltips.forEach((tooltip) => tooltip.update());
       if (disposed) return;
       const current = callbacks.current();
       const origin = attempt?.scope ?? draftScope;
@@ -6779,6 +7232,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       },
       update: paint,
       dispose() {
+        tooltips.forEach((tooltip) => tooltip.dispose());
         disposed = true;
         generation++;
         dismiss.dispose();
@@ -6829,7 +7283,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       message.textContent = "";
     }
     const cancel = mountButton(cancelRoot, {
-      label: "cancel",
+      label: "Cancel",
       variant: "secondary",
       size: "sm",
       onClick: () => {
@@ -6845,7 +7299,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       }
     });
     const confirm = mountButton(deleteRoot, {
-      label: "delete",
+      label: "Delete",
       variant: "destructive",
       size: "sm",
       onClick: () => {
@@ -6854,15 +7308,30 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     });
     addButtonIcon(deleteRoot, "delete");
     actions2.append(cancelRoot, retryRoot, deleteRoot);
+    const tooltips = [
+      mountTooltip(
+        cancelRoot.querySelector("button"),
+        "Close this confirmation without removing the change."
+      ),
+      mountTooltip(
+        retryRoot.querySelector("button"),
+        "Read the original project to resolve the deletion outcome; do not retry deletion."
+      ),
+      mountTooltip(
+        deleteRoot.querySelector("button"),
+        "Permanently remove this change's planning folder; implementation and main specifications remain."
+      )
+    ];
     dialog.append(heading, description, message, actions2);
     root2.append(dialog);
     function display() {
+      tooltips.forEach((tooltip) => tooltip.update());
       message.hidden = !message.textContent;
       retryRoot.hidden = mode !== "unresolved";
       deleteRoot.hidden = mode !== "confirming" && mode !== "deleting";
       cancel.update({
         disabled: mode === "deleting" || mode === "reconciling" || mode === "unresolved",
-        label: mode === "present" ? "Close" : "cancel"
+        label: mode === "present" ? "Close" : "Cancel"
       });
       confirm.update({ disabled: mode !== "confirming", loading: mode === "deleting" });
     }
@@ -6950,6 +7419,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         }
       },
       dispose() {
+        tooltips.forEach((tooltip) => tooltip.dispose());
         disposed = true;
         dialog.close();
         cancel.dispose();
@@ -6984,13 +7454,13 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       opener = null;
     }
     const cancel = mountButton(cancelRoot, {
-      label: "cancel",
+      label: "Cancel",
       variant: "secondary",
       size: "sm",
       onClick: close
     });
     const start = mountButton(startRoot, {
-      label: "start archiving",
+      label: "Start archiving",
       size: "sm",
       onClick: () => {
         if (!origin || origin !== callbacks.current() || !callbacks.canStart()) return;
@@ -7003,6 +7473,16 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       close();
     });
     actions2.append(cancelRoot, startRoot);
+    const tooltips = [
+      mountTooltip(
+        cancelRoot.querySelector("button"),
+        "Close this confirmation without creating a session or sending a prompt."
+      ),
+      mountTooltip(
+        startRoot.querySelector("button"),
+        "Create a new session and submit the completed-only archive prompt; skip unfinished changes."
+      )
+    ];
     dialog.append(heading, description, actions2);
     root2.append(dialog);
     return {
@@ -7014,10 +7494,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         cancelRoot.querySelector("button")?.focus();
       },
       update() {
+        tooltips.forEach((tooltip) => tooltip.update());
         if (dialog.open && origin !== callbacks.current()) close();
         start.update({ disabled: !callbacks.canStart() });
       },
       dispose() {
+        tooltips.forEach((tooltip) => tooltip.dispose());
         cancel.dispose();
         start.dispose();
         dialog.remove();
@@ -7212,8 +7694,10 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
           const listing = await client.list(currentDirectory);
           if (directory !== currentDirectory || epoch !== startingEpoch || operation !== boardOperation)
             return;
-          if (scope && scope.root !== listing.root) {
+          if (scope && (scope.root !== listing.root || scope.planning !== listing.planning)) {
+            const retainedSearch = scope.root === listing.root ? search : "";
             invalidate();
+            search = retainedSearch;
             loadBoard();
             return;
           }
@@ -7335,28 +7819,9 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
         }
       })();
     }
-    function actionPrompt(change, intent) {
-      const target = `OpenSpec change "${change.id}"`;
-      const goal = change.goal?.trim() ? `
-Goal: ${change.goal}` : "";
-      if (intent === "explore")
-        return `Use your skill tool to load and invoke the openspec-explore skill for ${target}.${goal}
-
-Investigate the goal, relevant code, options and trade-offs for ${target}. Discuss findings without file changes or implementation. If no goal is recorded, inspect existing context and ask the user to clarify it if necessary; do not invent a goal.`;
-      if (change.stage === "planning")
-        return `Use your skill tool to load and invoke the openspec-propose skill for ${target} (existing change).${goal}
-
-Inspect ${target}'s status and current metadata. Preserve existing decisions and any recorded goal; only if current metadata has no goal, establish and record a concise goal from existing change context. Ask the user for clarification if the goal is unclear. Finish planning this existing scaffold and complete missing planning artefacts using OpenSpec's artefact instructions. Do not create another change or implement code. If the skill requires new-change creation, explain the conflict rather than creating another change.`;
-      if (change.stage === "ready" || change.stage === "progress") {
-        const progress = change.stage === "progress" ? `
-${change.completedTasks} of ${change.totalTasks} tasks complete. Pick up where implementation left off and complete the remaining tasks.` : "";
-        return `Use your skill tool to load and invoke the openspec-apply-change skill for ${target}.${progress}
-
-Complete all remaining tasks in ${target}, then verify the implementation against its change artefacts. Resolve any issues found and verify again until all tasks are complete and verification passes. If blocked, report the blocker rather than marking unfinished work complete.`;
-      }
-      if (intent === "verify")
-        return `Use your skill tool to load and invoke the openspec-verify-change skill for ${target}.`;
-      return `Use your skill tool to load and invoke the openspec-archive-change skill for ${target}.`;
+    async function prepareChangeWorkflow(workflow, change, captured, originatingEpoch, originatingSession, detail = false) {
+      const current = () => !disposed && !!captured && scope === captured && epoch === originatingEpoch && directory === captured.directory && sessionId === originatingSession && !unavailableIds.has(change.id) && changes.some((item) => item.id === change.id) && (!detail || selectedChange?.id === change.id);
+      await composePrompt(changeWorkflowPrompt(workflow, change), current);
     }
     async function preparePrompt(change, captured, originatingEpoch, intent, originatingSession = sessionId) {
       const current = changes.find((item) => item.id === change.id);
@@ -7368,15 +7833,22 @@ Complete all remaining tasks in ${target}, then verify the implementation agains
         return;
       }
       const expectedSession = sessionId;
+      await composePrompt(
+        actionPrompt(change, intent),
+        () => scope === captured && epoch === originatingEpoch && sessionId === expectedSession
+      );
+    }
+    async function composePrompt(text2, current) {
+      if (!current()) return;
       try {
-        await host2.compose({ text: actionPrompt(change, intent), mode: "replace" });
-        if (scope !== captured || epoch !== originatingEpoch || sessionId !== expectedSession) return;
+        await host2.compose({ text: text2, mode: "replace" });
+        if (!current()) return;
         await host2.toast({
           kind: "success",
           message: "Workflow prompt prepared in the open composer."
         });
       } catch (caught) {
-        if (scope !== captured || epoch !== originatingEpoch || sessionId !== expectedSession) return;
+        if (!current()) return;
         await host2.toast({
           kind: "error",
           message: caught instanceof HostRequestError ? caught.message : "The workflow prompt could not be prepared."
@@ -7762,8 +8234,13 @@ Complete all remaining tasks in ${target}, then verify the implementation agains
       archiveView.update();
       const captured = scope;
       const originatingEpoch = epoch;
+      const originatingDirectory = directory;
       boardView.update({
         directory,
+        workflow: (workflow) => void composePrompt(
+          globalWorkflowPrompt(workflow),
+          () => !!originatingDirectory && !disposed && directory === originatingDirectory && scope === captured && epoch === originatingEpoch && sessionId === originatingSession
+        ),
         canCreate: !!scope,
         canArchive: canArchive(),
         archivePending,
@@ -7786,7 +8263,14 @@ Complete all remaining tasks in ${target}, then verify the implementation agains
             captured,
             originatingEpoch
           ),
-          action: (intent) => void preparePrompt(change, captured, originatingEpoch, intent, originatingSession)
+          action: (intent) => void preparePrompt(change, captured, originatingEpoch, intent, originatingSession),
+          workflow: (workflow) => void prepareChangeWorkflow(
+            workflow,
+            change,
+            captured,
+            originatingEpoch,
+            originatingSession
+          )
         }))
       });
       boardView.setVisible(!selectedChange);
@@ -7809,6 +8293,17 @@ Complete all remaining tasks in ${target}, then verify the implementation agains
                 originatingEpoch,
                 intent,
                 originatingSession
+              );
+          },
+          workflow: (workflow) => {
+            if (detailChange)
+              void prepareChangeWorkflow(
+                workflow,
+                detailChange,
+                captured,
+                originatingEpoch,
+                originatingSession,
+                true
               );
           }
         } : null

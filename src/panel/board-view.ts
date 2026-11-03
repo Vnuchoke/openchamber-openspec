@@ -1,8 +1,14 @@
 import { mountButton, mountProgress, mountSearchField } from "@openchamber/sdk/ui";
 import type { DerivedChange } from "../model.js";
-import { stages } from "./workflow.js";
-import { mountPrimaryAction } from "./primary-action.js";
-import { mountHelpButton } from "./help-button.js";
+import {
+  changeWorkflows,
+  globalWorkflows,
+  stages,
+  type ChangeWorkflow,
+  type GlobalWorkflow,
+} from "./workflow.js";
+import { mountPrimaryAction, mountWorkflowMenu } from "./primary-action.js";
+import { mountHelpButton, mountTooltip } from "./help-button.js";
 import { addButtonIcon } from "./button-icon.js";
 import { mountAreaBadges } from "./area-badges.js";
 
@@ -13,9 +19,11 @@ export type BoardCard = {
   open: () => void;
   pending?: boolean;
   action: (intent: "primary" | "worktree" | "verify" | "explore") => void;
+  workflow: (workflow: ChangeWorkflow) => void;
 };
 export type BoardState = {
   directory: string | null;
+  workflow: (workflow: GlobalWorkflow) => void;
   canCreate: boolean;
   canArchive: boolean;
   archivePending: boolean;
@@ -54,7 +62,7 @@ export function mountBoardView(
   headingActions.className = "heading-actions";
   const newChangeRoot = document.createElement("span");
   const newChange = mountButton(newChangeRoot, {
-    label: "new change",
+    label: "Create scaffold…",
     variant: "default",
     size: "sm",
     disabled: true,
@@ -63,7 +71,7 @@ export function mountBoardView(
   addButtonIcon(newChangeRoot, "create");
   const archiveRoot = document.createElement("span");
   const archive = mountButton(archiveRoot, {
-    label: "archive all",
+    label: "Archive all",
     variant: "secondary",
     size: "sm",
     disabled: true,
@@ -79,7 +87,7 @@ export function mountBoardView(
   const refreshRoot = document.createElement("span");
   refreshRoot.className = "refresh-control";
   const refresh = mountButton(refreshRoot, {
-    label: "refresh",
+    label: "Refresh",
     variant: "ghost",
     size: "sm",
     onClick: callbacks.retry,
@@ -87,7 +95,23 @@ export function mountBoardView(
   addButtonIcon(refreshRoot, "refresh");
   const helpRoot = document.createElement("span");
   const help = mountHelpButton(helpRoot, callbacks.help);
-  headingActions.append(helpRoot, refreshRoot, archiveRoot, newChangeRoot);
+  const tooltips = [
+    mountTooltip(
+      newChangeRoot.querySelector("button")!,
+      "Open a form that directly creates a scaffold with its name and goal; no agent prompt is sent.",
+    ),
+    mountTooltip(
+      archiveRoot.querySelector("button")!,
+      "Open confirmation to create a new session and submit an archive prompt for completed changes only; unfinished changes are skipped.",
+    ),
+    mountTooltip(
+      refreshRoot.querySelector("button")!,
+      "Read the latest board state without changing files.",
+    ),
+  ];
+  const workflowRoot = document.createElement("span");
+  const workflows = mountWorkflowMenu(workflowRoot, globalWorkflows);
+  headingActions.append(helpRoot, refreshRoot, workflowRoot, archiveRoot, newChangeRoot);
   const searchRoot = document.createElement("span");
   searchRoot.className = "board-search";
   let searchValue = "";
@@ -130,11 +154,13 @@ export function mountBoardView(
     {
       node: HTMLElement;
       title: HTMLButtonElement;
+      tooltips: ReturnType<typeof mountTooltip>[];
       areas: ReturnType<typeof mountAreaBadges>;
       progressLabel: HTMLElement;
       progressRoot: HTMLElement;
       progress: ReturnType<typeof mountProgress>;
       action: ReturnType<typeof mountPrimaryAction>;
+      workflows: ReturnType<typeof mountWorkflowMenu<ChangeWorkflow>>;
       explore: ReturnType<typeof mountButton>;
       exploreRoot: HTMLElement;
       verify: ReturnType<typeof mountButton>;
@@ -146,9 +172,22 @@ export function mountBoardView(
   function addAction(target: HTMLElement, label: string) {
     const mount = document.createElement("span");
     target.append(mount);
-    noticesMounted.push(
-      mountButton(mount, { label, variant: "secondary", size: "sm", onClick: callbacks.retry }),
+    const button = mountButton(mount, {
+      label,
+      variant: "secondary",
+      size: "sm",
+      onClick: callbacks.retry,
+    });
+    const tooltip = mountTooltip(
+      mount.querySelector("button")!,
+      "Retry reading the board; do not repeat any write.",
     );
+    noticesMounted.push({
+      dispose() {
+        tooltip.dispose();
+        button.dispose();
+      },
+    });
   }
   function cardFor(item: BoardCard) {
     let entry = cards.get(item.change.id);
@@ -168,19 +207,22 @@ export function mountBoardView(
       const action = mountPrimaryAction(actionRoot);
       const exploreRoot = document.createElement("span");
       const explore = mountButton(exploreRoot, {
-        label: "explore",
+        label: "Explore",
         variant: "secondary",
         size: "sm",
         onClick: () => cards.get(id)?.current.action("explore"),
       });
       const verifyRoot = document.createElement("span");
       const verify = mountButton(verifyRoot, {
-        label: "verify",
+        label: "Verify",
         variant: "secondary",
         size: "sm",
         onClick: () => cards.get(id)?.current.action("verify"),
       });
       actionRoot.prepend(exploreRoot, verifyRoot);
+      const workflowRoot = document.createElement("span");
+      const workflows = mountWorkflowMenu(workflowRoot, changeWorkflows);
+      actionRoot.append(workflowRoot);
       title.addEventListener("click", () => cards.get(id)?.current.open());
       const status = document.createElement("p");
       status.className = "stale-label";
@@ -188,6 +230,17 @@ export function mountBoardView(
       const areas = mountAreaBadges(node);
       node.append(progressLabel, progressRoot, actionRoot, status);
       entry = {
+        tooltips: [
+          mountTooltip(title, "Open this change's planning documents and tasks."),
+          mountTooltip(
+            exploreRoot.querySelector("button")!,
+            "Prepare an editable, unsent exploration prompt without file changes.",
+          ),
+          mountTooltip(
+            verifyRoot.querySelector("button")!,
+            "Prepare an editable, unsent diagnostic verification prompt; do not implement or archive.",
+          ),
+        ],
         node,
         title,
         areas,
@@ -195,6 +248,7 @@ export function mountBoardView(
         progressRoot,
         progress,
         action,
+        workflows,
         explore,
         exploreRoot,
         verify,
@@ -205,6 +259,7 @@ export function mountBoardView(
       cards.set(id, entry);
     }
     entry.current = item;
+    entry.tooltips.forEach((tooltip) => tooltip.update());
     const change = item.change;
     if (entry.title.textContent !== change.id) entry.title.textContent = change.id;
     entry.areas.update(change.affectedAreas);
@@ -223,6 +278,7 @@ export function mountBoardView(
       action: item.action,
     });
     entry.explore.update({ disabled: item.unavailable });
+    entry.workflows.update({ disabled: item.unavailable, action: item.workflow });
     entry.exploreRoot.hidden = change.stage !== "planning";
     entry.verifyRoot.hidden = change.stage !== "complete";
     entry.verify.update({ disabled: item.unavailable });
@@ -235,8 +291,11 @@ export function mountBoardView(
   return {
     setVisible(visible: boolean) {
       main.hidden = !visible;
+      tooltips.forEach((tooltip) => tooltip.update());
     },
     update(state: BoardState) {
+      tooltips.forEach((tooltip) => tooltip.update());
+      workflows.update({ disabled: !state.directory, action: state.workflow });
       project.textContent =
         state.directory?.split("/").filter(Boolean).at(-1) ?? "No project selected";
       newChange.update({ disabled: !state.canCreate });
@@ -287,6 +346,8 @@ export function mountBoardView(
       for (const [id, entry] of cards) {
         if (ids.has(id)) continue;
         entry.action.dispose();
+        entry.tooltips.forEach((tooltip) => tooltip.dispose());
+        entry.workflows.dispose();
         entry.explore.dispose();
         entry.verify.dispose();
         entry.progress.dispose();
@@ -332,9 +393,12 @@ export function mountBoardView(
       }
     },
     dispose() {
+      tooltips.forEach((tooltip) => tooltip.dispose());
       noticesMounted.forEach((handle) => handle.dispose());
       for (const entry of cards.values()) {
+        entry.tooltips.forEach((tooltip) => tooltip.dispose());
         entry.action.dispose();
+        entry.workflows.dispose();
         entry.explore.dispose();
         entry.verify.dispose();
         entry.progress.dispose();
@@ -342,6 +406,7 @@ export function mountBoardView(
       }
       cards.clear();
       newChange.dispose();
+      workflows.dispose();
       archive.dispose();
       refresh.dispose();
       help.dispose();

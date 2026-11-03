@@ -1,4 +1,5 @@
 import { mountButton } from "@openchamber/sdk/ui";
+import { mountTooltip } from "./help-button.js";
 
 export function mountArchiveDialog(
   root: HTMLElement,
@@ -27,13 +28,13 @@ export function mountArchiveDialog(
     opener = null;
   }
   const cancel = mountButton(cancelRoot, {
-    label: "cancel",
+    label: "Cancel",
     variant: "secondary",
     size: "sm",
     onClick: close,
   });
   const start = mountButton(startRoot, {
-    label: "start archiving",
+    label: "Start archiving",
     size: "sm",
     onClick: () => {
       if (!origin || origin !== callbacks.current() || !callbacks.canStart()) return;
@@ -46,6 +47,16 @@ export function mountArchiveDialog(
     close();
   });
   actions.append(cancelRoot, startRoot);
+  const tooltips = [
+    mountTooltip(
+      cancelRoot.querySelector("button")!,
+      "Close this confirmation without creating a session or sending a prompt.",
+    ),
+    mountTooltip(
+      startRoot.querySelector("button")!,
+      "Create a new session and submit the completed-only archive prompt; skip unfinished changes.",
+    ),
+  ];
   dialog.append(heading, description, actions);
   root.append(dialog);
   return {
@@ -57,10 +68,12 @@ export function mountArchiveDialog(
       cancelRoot.querySelector("button")?.focus();
     },
     update() {
+      tooltips.forEach((tooltip) => tooltip.update());
       if (dialog.open && origin !== callbacks.current()) close();
       start.update({ disabled: !callbacks.canStart() });
     },
     dispose() {
+      tooltips.forEach((tooltip) => tooltip.dispose());
       cancel.dispose();
       start.dispose();
       dialog.remove();
