@@ -460,6 +460,84 @@ test("workflow menu labels use sentence case without changing change names", asy
   });
 });
 
+test("ordinary tooltip hover only ignores keyboard focus on board detail and dialog", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    for (const surface of ["board", "detail", "dialog"]) {
+      if (surface === "detail") {
+        await panel.getByRole("button", { name: "first-change", exact: true }).click();
+        await panel.locator(".detail-toolbar .refresh-control button:not(:disabled)").waitFor();
+      } else if (surface === "dialog") {
+        await panel.getByRole("button", { name: "Back to changes", exact: true }).click();
+        await panel.getByRole("button", { name: "Create scaffold…", exact: true }).click();
+      }
+      const button =
+        surface === "dialog"
+          ? panel.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true })
+          : panel.locator(
+              surface === "board"
+                ? ".toolbar .refresh-control button"
+                : ".detail-toolbar .refresh-control button",
+            );
+      await page.mouse.move(0, 0);
+      const before = await page.evaluate(() => __requests.length);
+      await button.focus();
+      assert.equal(
+        await panel.locator(".button-tooltip").count(),
+        0,
+        `${surface}: focus alone must not show a description`,
+      );
+      await button.hover();
+      await panel.locator(".button-tooltip").waitFor();
+      await page.mouse.move(0, 0);
+      assert.equal(await panel.locator(".button-tooltip").count(), 0);
+      assert.equal(await button.evaluate((node) => node === document.activeElement), true);
+      assert.equal(await page.evaluate(() => __requests.length), before);
+    }
+    await page.close();
+  });
+});
+
+test("ordinary tooltip hover only hides immediately inside the description rectangle while owner stays focused", async () => {
+  await withPanel(async (browser, url) => {
+    for (const width of [320, 1076])
+      for (const mode of ["light", "dark"]) {
+        const page = await browser.newPage({ viewport: { width, height: 700 } });
+        await page.goto(url);
+        const panel = page.frameLocator("iframe");
+        await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+        await page.evaluate((mode) => __theme(mode), mode);
+        const button = panel.getByRole("button", { name: "Create scaffold…", exact: true });
+        const before = await page.evaluate(() => __requests.length);
+        await button.focus();
+        await button.hover();
+        const tooltip = panel.locator(".button-tooltip");
+        await tooltip.waitFor();
+        const box = await tooltip.boundingBox();
+        const id = await tooltip.getAttribute("id");
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        assert.equal(
+          await panel.locator(`[id="${id}"]`).count(),
+          0,
+          "pointer exit must hide immediately, including inside the old tooltip rectangle",
+        );
+        assert.equal(await button.evaluate((node) => node === document.activeElement), true);
+        assert.equal(await button.getAttribute("aria-describedby"), null);
+        await button.evaluate((node) => node.blur());
+        await button.hover();
+        await tooltip.waitFor();
+        assert.equal(await button.evaluate((node) => node === document.activeElement), false);
+        await page.mouse.move(0, 0);
+        assert.equal(await tooltip.count(), 0);
+        assert.equal(await page.evaluate(() => __requests.length), before);
+        await page.close();
+      }
+  });
+});
+
 test("workflow menu descriptions exclusive suppress ordinary tooltips on all surfaces until dismissal", async () => {
   await withPanel(async (browser, url) => {
     const page = await browser.newPage();
@@ -487,6 +565,7 @@ test("workflow menu descriptions exclusive suppress ordinary tooltips on all sur
       const before = await page.evaluate(() => __requests.length);
       await trigger.focus();
       await ordinary.focus();
+      await ordinary.hover();
       await panel.locator(".button-tooltip").waitFor();
       // Programmatic activation retains the existing description until the opening transition.
       await trigger.evaluate((node) => node.click());
@@ -516,6 +595,7 @@ test("workflow menu descriptions exclusive suppress ordinary tooltips on all sur
       await menu.waitFor({ state: "hidden" });
       assert.equal(await trigger.evaluate((node) => node === document.activeElement), true);
       await ordinary.focus();
+      await ordinary.hover();
       await panel.locator(".button-tooltip").waitFor();
       await page.keyboard.press("Escape");
       assert.equal(await page.evaluate(() => __requests.length), before);
@@ -740,7 +820,7 @@ test("workflow menu descriptions exclusive survive SDK repaint and stage updates
   });
 });
 
-test("workflow menu descriptions support focus, hover, dismissal and narrow themed placement without requests", async () => {
+test("workflow menu descriptions support hover, dismissal and narrow themed placement without requests", async () => {
   await withPanel(async (browser, url) => {
     for (const width of [320, 1076])
       for (const mode of ["light", "dark"]) {
@@ -752,6 +832,7 @@ test("workflow menu descriptions support focus, hover, dismissal and narrow them
         const before = await page.evaluate(() => __requests.length);
         const button = panel.getByRole("button", { name: "Create scaffold…", exact: true });
         await button.focus();
+        await button.hover();
         const tooltip = panel.getByRole("tooltip");
         await tooltip.waitFor({ timeout: 2000 });
         assert.match(await tooltip.innerText(), /form.*directly/i);
@@ -773,8 +854,9 @@ test("workflow menu descriptions support focus, hover, dismissal and narrow them
         await button.hover();
         await tooltip.waitFor();
         const hoverBox = await tooltip.boundingBox();
+        const hoverId = await tooltip.getAttribute("id");
         await page.mouse.move(hoverBox.x + hoverBox.width / 2, hoverBox.y + hoverBox.height / 2);
-        assert.equal(await tooltip.isVisible(), true);
+        assert.equal(await panel.locator(`[id="${hoverId}"]`).count(), 0);
         await page.mouse.move(0, 0);
         await tooltip.waitFor({ state: "detached" });
         assert.equal(await page.evaluate(() => __requests.length), before);
@@ -788,6 +870,7 @@ test("workflow menu descriptions support focus, hover, dismissal and narrow them
             includeHidden: true,
           });
         await cancel.focus();
+        await cancel.hover();
         await tooltip.waitFor();
         assert.match(await tooltip.innerText(), /without creating/i);
         const dialogBox = await tooltip.boundingBox();
@@ -854,6 +937,7 @@ test("workflow menu descriptions remain visible through unchanged session update
     await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
     const button = panel.getByRole("button", { name: "Create scaffold…", exact: true });
     await button.focus();
+    await button.hover();
     const tooltip = panel.getByRole("tooltip");
     await tooltip.waitFor();
     const id = await tooltip.getAttribute("id");
@@ -885,6 +969,7 @@ test("workflow menu descriptions follow stages, preserve other descriptions and 
       button.setAttribute("aria-describedby", note.id);
     });
     await primary.focus();
+    await primary.hover();
     const tooltip = panel.getByRole("tooltip");
     await tooltip.waitFor();
     assert.match(await tooltip.innerText(), /unsent.*at most one/i);
@@ -905,6 +990,7 @@ test("workflow menu descriptions follow stages, preserve other descriptions and 
     await archive.waitFor();
     await tooltip.waitFor({ state: "detached" });
     await archive.focus();
+    await archive.hover();
     await tooltip.waitFor();
     assert.match(await tooltip.innerText(), /unsent archive.*does not archive directly/i);
     const archiveId = await tooltip.getAttribute("id");
@@ -915,6 +1001,7 @@ test("workflow menu descriptions follow stages, preserve other descriptions and 
       .getByRole("button", { name: "Apply", exact: true });
     const before = await page.evaluate(() => __requests.length);
     await apply.focus();
+    await apply.hover();
     await tooltip.waitFor();
     assert.match(await tooltip.innerText(), /unsent.*worktree and session.*send/i);
     await apply.press("Enter");
@@ -934,6 +1021,7 @@ test("workflow menu descriptions follow stages, preserve other descriptions and 
       .locator(".heading-actions")
       .getByRole("button", { name: "Workflows", exact: true });
     await workflows.focus();
+    await workflows.hover();
     await tooltip.waitFor();
     assert.match(await tooltip.innerText(), /editable, unsent prompt/i);
     await page.evaluate(() => __directory(null));
@@ -964,6 +1052,7 @@ test("workflow menu descriptions explain read retries, navigation and all confir
       const button = panel.getByRole("button", { name, exact: true });
       await button.evaluate((node) => node.blur());
       await button.focus();
+      await button.hover();
       await tooltip.waitFor();
       assert.match(await tooltip.innerText(), outcome);
       await button.press("Escape");
@@ -972,6 +1061,7 @@ test("workflow menu descriptions explain read retries, navigation and all confir
     const retryTasks = panel.getByRole("button", { name: "Retry tasks", exact: true });
     const before = await page.evaluate(() => __requests.length);
     await retryTasks.focus();
+    await retryTasks.hover();
     await tooltip.waitFor();
     assert.match(await tooltip.innerText(), /reading tasks.*not change tasks/i);
     await retryTasks.press("Escape");
@@ -979,6 +1069,7 @@ test("workflow menu descriptions explain read retries, navigation and all confir
     const dialog = panel.getByRole("dialog");
     const confirm = dialog.getByRole("button", { name: "Delete", exact: true });
     await confirm.focus();
+    await confirm.hover();
     await tooltip.waitFor();
     assert.match(
       await tooltip.innerText(),
@@ -995,11 +1086,13 @@ test("workflow menu descriptions explain read retries, navigation and all confir
       .filter({ hasText: "Archive all" })
       .waitFor();
     await archiveAll.focus();
+    await archiveAll.hover();
     await tooltip.waitFor();
     assert.match(await tooltip.innerText(), /confirmation.*new session.*completed changes only/i);
     await archiveAll.click();
     const start = dialog.getByRole("button", { name: "Start archiving", exact: true });
     await start.focus();
+    await start.hover();
     await tooltip.waitFor();
     assert.match(await tooltip.innerText(), /new session.*submit.*skip unfinished/i);
     const archiveRequests = await page.evaluate(() => __requests.length);
@@ -1007,11 +1100,12 @@ test("workflow menu descriptions explain read retries, navigation and all confir
     await dialog.waitFor({ state: "hidden" });
     assert.equal(await page.evaluate(() => __requests.length), archiveRequests);
     assert.equal(await archiveAll.evaluate((button) => button === document.activeElement), true);
-    // Focus restoration may describe the opener, never the dismissed confirmation.
+    // Focus restoration must not describe the dismissed confirmation.
     assert.equal(await tooltip.filter({ hasText: /^Create a new session/ }).count(), 0);
     await panel.getByRole("button", { name: "Create scaffold…", exact: true }).click();
     const create = dialog.getByRole("button", { name: "Create", exact: true });
     await create.focus();
+    await create.hover();
     await tooltip.waitFor();
     assert.match(await tooltip.innerText(), /directly create.*no agent/i);
     await page.evaluate(() => {
@@ -1025,6 +1119,7 @@ test("workflow menu descriptions explain read retries, navigation and all confir
     await retry.waitFor();
     const retryBefore = await page.evaluate(() => __requests.length);
     await retry.focus();
+    await retry.hover();
     await tooltip.waitFor();
     assert.match(await tooltip.innerText(), /read the original project.*do not retry creation/i);
     await retry.press("Escape");

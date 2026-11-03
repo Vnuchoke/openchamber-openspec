@@ -110,11 +110,13 @@ questions and artifact creation to the agent. Likewise, **Bulk archive** is inte
 selection and confirmation, whereas **Archive all** retains its separate confirmation before
 starting a session for completed changes only, regardless of the search filter.
 
-Buttons use sentence case. Hover or focus a button to read its outcome without activating it; Escape
-dismisses the description; native dialogs and menus keep their usual Escape closing and focus
-restoration. Descriptions preserve accessible names and distinguish unsent drafts from direct
-scaffold creation, deletion, and confirmed session/worktree launches. Retry descriptions refer only
-to reads, never automatically repeating uncertain writes.
+Buttons use sentence case. Hover a button to read its outcome without activating it; leaving the
+button hides its description immediately, even when moving onto the description. Keyboard focus
+alone neither shows nor retains ordinary descriptions. Escape dismisses the description; native
+dialogs and menus keep their usual Escape closing and focus restoration. Descriptions preserve
+accessible names and distinguish unsent drafts from direct scaffold creation, deletion, and
+confirmed session/worktree launches. Retry descriptions refer only to reads, never automatically
+repeating uncertain writes.
 
 While any **Workflows** list is open, ordinary button descriptions are suppressed, including its
 trigger's. Hover an entry or use Arrow keys, Home or End to read its outcome inline in the active

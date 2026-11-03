@@ -2345,25 +2345,18 @@ Check the workflow's archival prerequisites and retain required user confirmatio
   // src/panel/help-button.ts
   var tooltipId = 0;
   var dismissTooltip = null;
-  var overTooltip = null;
   function mountTooltip(button2, text2) {
     const id = `button-outcome-${++tooltipId}`;
     let tooltip = null;
     const usable = () => button2.isConnected && !button2.disabled && button2.checkVisibility() && !Array.from(document.querySelectorAll('.workflow-menu [role="menu"]')).some(
       (menu) => menu.checkVisibility()
     );
-    const containsPointer = (event) => {
-      const box = tooltip?.getBoundingClientRect();
-      return !!box && event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
-    };
     let observer = null;
     function hide() {
       if (dismissTooltip === hide) {
         dismissTooltip = null;
-        overTooltip = null;
       }
       document.removeEventListener("keydown", escape2);
-      document.removeEventListener("pointermove", leave);
       document.removeEventListener("pointerdown", hide, true);
       window.removeEventListener("resize", hide);
       window.removeEventListener("scroll", hide, true);
@@ -2375,12 +2368,10 @@ Check the workflow's archival prerequisites and retain required user confirmatio
       if (ids.length) button2.setAttribute("aria-describedby", ids.join(" "));
       else button2.removeAttribute("aria-describedby");
     }
-    function show(event) {
+    function show() {
       if (tooltip || !usable()) return;
-      if (event instanceof PointerEvent && overTooltip?.(event)) return;
       dismissTooltip?.();
       dismissTooltip = hide;
-      overTooltip = containsPointer;
       tooltip = document.createElement("div");
       tooltip.id = id;
       tooltip.className = "button-tooltip";
@@ -2406,24 +2397,15 @@ Check the workflow's archival prerequisites and retain required user confirmatio
         attributeFilter: ["hidden", "disabled", "open", "style", "class"]
       });
       document.addEventListener("keydown", escape2);
-      document.addEventListener("pointermove", leave);
       document.addEventListener("pointerdown", hide, true);
       window.addEventListener("resize", hide);
       window.addEventListener("scroll", hide, true);
-    }
-    function leave(event) {
-      if (containsPointer(event)) return;
-      if (event.type === "pointermove" && event.target instanceof Node && button2.contains(event.target))
-        return;
-      hide();
     }
     const escape2 = (event) => {
       if (event.key === "Escape") hide();
     };
     button2.addEventListener("pointermove", show);
-    button2.addEventListener("pointerleave", leave);
-    button2.addEventListener("focus", show);
-    button2.addEventListener("blur", hide);
+    button2.addEventListener("pointerleave", hide);
     button2.addEventListener("click", hide, true);
     return {
       update(next = text2) {
@@ -2433,9 +2415,7 @@ Check the workflow's archival prerequisites and retain required user confirmatio
       dispose() {
         hide();
         button2.removeEventListener("pointermove", show);
-        button2.removeEventListener("pointerleave", leave);
-        button2.removeEventListener("focus", show);
-        button2.removeEventListener("blur", hide);
+        button2.removeEventListener("pointerleave", hide);
         button2.removeEventListener("click", hide, true);
       }
     };

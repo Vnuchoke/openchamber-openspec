@@ -2,7 +2,6 @@ import { mountButton } from "@openchamber/sdk/ui";
 
 let tooltipId = 0;
 let dismissTooltip: (() => void) | null = null;
-let overTooltip: ((event: PointerEvent) => boolean) | null = null;
 
 export function mountTooltip(button: HTMLButtonElement, text: string) {
   const id = `button-outcome-${++tooltipId}`;
@@ -14,24 +13,12 @@ export function mountTooltip(button: HTMLButtonElement, text: string) {
     !Array.from(document.querySelectorAll<HTMLElement>('.workflow-menu [role="menu"]')).some(
       (menu) => menu.checkVisibility(),
     );
-  const containsPointer = (event: PointerEvent) => {
-    const box = tooltip?.getBoundingClientRect();
-    return (
-      !!box &&
-      event.clientX >= box.left &&
-      event.clientX <= box.right &&
-      event.clientY >= box.top &&
-      event.clientY <= box.bottom
-    );
-  };
   let observer: MutationObserver | null = null;
   function hide() {
     if (dismissTooltip === hide) {
       dismissTooltip = null;
-      overTooltip = null;
     }
     document.removeEventListener("keydown", escape);
-    document.removeEventListener("pointermove", leave);
     document.removeEventListener("pointerdown", hide, true);
     window.removeEventListener("resize", hide);
     window.removeEventListener("scroll", hide, true);
@@ -45,12 +32,10 @@ export function mountTooltip(button: HTMLButtonElement, text: string) {
     if (ids.length) button.setAttribute("aria-describedby", ids.join(" "));
     else button.removeAttribute("aria-describedby");
   }
-  function show(event: Event) {
+  function show() {
     if (tooltip || !usable()) return;
-    if (event instanceof PointerEvent && overTooltip?.(event)) return;
     dismissTooltip?.();
     dismissTooltip = hide;
-    overTooltip = containsPointer;
     tooltip = document.createElement("div");
     tooltip.id = id;
     tooltip.className = "button-tooltip";
@@ -78,29 +63,15 @@ export function mountTooltip(button: HTMLButtonElement, text: string) {
       attributeFilter: ["hidden", "disabled", "open", "style", "class"],
     });
     document.addEventListener("keydown", escape);
-    document.addEventListener("pointermove", leave);
     document.addEventListener("pointerdown", hide, true);
     window.addEventListener("resize", hide);
     window.addEventListener("scroll", hide, true);
   }
-  function leave(event: PointerEvent) {
-    if (containsPointer(event)) return;
-    if (
-      event.type === "pointermove" &&
-      event.target instanceof Node &&
-      button.contains(event.target)
-    )
-      return;
-    hide();
-  }
   const escape = (event: KeyboardEvent) => {
     if (event.key === "Escape") hide();
   };
-  // Actual pointer movement must not let a stationary cursor override a keyboard-focused tooltip.
   button.addEventListener("pointermove", show);
-  button.addEventListener("pointerleave", leave);
-  button.addEventListener("focus", show);
-  button.addEventListener("blur", hide);
+  button.addEventListener("pointerleave", hide);
   button.addEventListener("click", hide, true);
   return {
     update(next = text) {
@@ -110,9 +81,7 @@ export function mountTooltip(button: HTMLButtonElement, text: string) {
     dispose() {
       hide();
       button.removeEventListener("pointermove", show);
-      button.removeEventListener("pointerleave", leave);
-      button.removeEventListener("focus", show);
-      button.removeEventListener("blur", hide);
+      button.removeEventListener("pointerleave", hide);
       button.removeEventListener("click", hide, true);
     },
   };
