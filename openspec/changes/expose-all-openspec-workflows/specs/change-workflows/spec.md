@@ -5,9 +5,10 @@
 ### Requirement: Button labels and descriptions communicate outcomes accessibly
 
 Extension-owned buttons SHALL use sentence case, preserving names, acronyms and change IDs.
-Outcome descriptions SHALL appear on hover and keyboard focus, linked with aria-describedby without
-replacing accessible names. They SHALL remain hoverable, dismissible and viewport-contained in both
-themes. Description lifecycle SHALL follow the owning control without changing action semantics.
+Ordinary descriptions SHALL appear only while the pointer is over their owner button, linked with
+aria-describedby without replacing accessible names. They SHALL dismiss immediately on pointer exit,
+including movement onto the description; focus alone SHALL NOT show or retain them. Descriptions
+SHALL remain dismissible and viewport-contained. Inline Workflows descriptions are exempt.
 
 #### Scenario: Update or remove a described control
 
@@ -18,7 +19,7 @@ themes. Description lifecycle SHALL follow the owning control without changing a
 
 #### Scenario: Distinguish side effects before activation
 
-- **WHEN** the user hovers or focuses a workflow, scaffold or archive control
+- **WHEN** the user hovers a workflow, scaffold or archive control
 - **THEN** its description distinguishes an editable unsent prompt, direct scaffold write or
   confirmation followed by session/worktree creation and submission
 - **AND** Continue artifacts describes at most one planning artifact, while Apply offers destination
@@ -26,7 +27,7 @@ themes. Description lifecycle SHALL follow the owning control without changing a
 
 #### Scenario: Inspect and dismiss without acting
 
-- **WHEN** a user focuses or hovers an enabled button, then presses Escape
+- **WHEN** a user hovers an enabled button, then presses Escape
 - **THEN** its description disappears without invoking its action or reading data
 - **AND** focus stays on a standalone button; inside a native dialog or menu, existing Escape
   dismissal and focus restoration remain in effect rather than requiring an extra Escape
@@ -35,8 +36,16 @@ themes. Description lifecycle SHALL follow the owning control without changing a
 
 - **WHEN** a description overlaps another action in a narrow, wrapped toolbar
 - **THEN** the neighboring button remains clickable without first dismissing the description
-- **AND** hovering the description keeps its text readable without intercepting that click
-- **AND** unchanged session updates do not dismiss the focused button's description
+- **AND** moving onto the ordinary description dismisses it without intercepting that click
+- **AND** unchanged session updates do not dismiss the hovered button's description
+
+#### Scenario: Leave an owner button while it retains focus
+
+- **WHEN** a hovered ordinary button shows a description and the pointer leaves its boundaries
+- **THEN** the description disappears immediately, even if focus stays on that button or the pointer
+  enters the description's former bounds
+- **AND** focusing another ordinary button without hover does not show a description
+- **AND** inline Workflows descriptions still respond to hovering and keyboard navigation
 
 ### Requirement: Open Workflows menus exclusively describe their own entries
 

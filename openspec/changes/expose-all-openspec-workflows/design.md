@@ -89,13 +89,15 @@ use sentence case (Refresh, Archive all, Cancel, Create, Delete, Start archiving
 acronyms and change IDs. SDK tabs and menu items retain their existing semantics.
 SDK 1.24.2 exports no tooltip primitive and ButtonProps has no description field. A small helper
 in existing `help-button.ts` attaches `role="tooltip"` and `aria-describedby` to existing buttons;
-it does not wrap mounting or change callbacks. Descriptions explain outcomes, not labels. Show on
-hover/focus, keep hoverable, dismiss on Escape/activation/leave/blur, update with stage, and dispose
+it does not wrap mounting or change callbacks. Descriptions explain outcomes, not labels. Show only
+on owner-button hover, dismiss on Escape/activation/pointer exit, update with stage, and dispose
 with the owning control. Use theme tokens and fixed placement clamped/flipped within the iframe.
 Prefer placement above the control. Descriptions are pointer-transparent so wrapped neighboring
-buttons remain clickable; while visible, pointer coordinates retain hover over the description's
-rectangle. Real pointer movement, not stationary re-entry after DOM changes, changes the hover owner.
-Unchanged owner updates retain the visible description instead of dismissing it on session repaint.
+buttons remain clickable. The latest user request supersedes hoverable/focus-triggered ordinary
+descriptions: leaving the owner button immediately dismisses its description, even when the pointer
+enters that description's rectangle. Focus alone neither shows nor retains an ordinary description.
+Remove obsolete description-hover geometry and focus listeners rather than introducing a mode flag.
+Unchanged owner updates retain an already-hovered description across ordinary session repaints.
 Escape does not consume the native dialog/menu dismissal: preserve existing overlay closing and
 focus restoration, rather than adding a second-keypress requirement just for descriptions.
 Describe Workflows as choosing an unsent prompt; Apply as choosing current-chat draft or explicit
@@ -111,7 +113,7 @@ and dispose the observer with the menu. Bound popup width before SDK placement, 
 content within the viewport, and ensure the active description remains reachable by native scrolling.
 The ordinary tooltip helper must refuse display whenever a visible Workflows list exists, including
 the invoking trigger or unrelated buttons. Its visible-description observer removes an existing
-description on opening; dismissal restores ordinary hover/focus behavior. No new tooltip manager,
+description on opening; dismissal restores ordinary button-hover behavior. No new tooltip manager,
 SDK patch, polling, reads or workflow dispatch path is introduced.
 
 The named Apply tasks entry always composes in the current chat. The existing Apply destination

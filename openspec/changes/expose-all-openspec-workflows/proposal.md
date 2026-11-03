@@ -32,11 +32,14 @@ confusing artifact creation with implementation or accidentally submitting a pro
   preparing a prompt and executing it. Skill installation or agent authorization remains the
   user's environment responsibility; do not silently substitute a different workflow.
 - Apply sentence case to extension-owned buttons, preserving names, acronyms and change IDs.
-  Add outcome-oriented hover and keyboard-focus descriptions without replacing accessible names;
+  Add outcome-oriented button-hover descriptions without replacing accessible names;
   distinguish unsent drafts, direct scaffold writes and confirmed session/worktree launches.
 - While any Workflows list is open, suppress its trigger description and every description outside
   that list. Describe each active workflow on pointer hover or keyboard navigation within its row,
   without covering the list or neighboring actions. Restore ordinary descriptions after dismissal.
+- Ordinary button descriptions are visible only over their owner button and disappear immediately
+  on pointer exit, including movement onto the description. Keyboard focus alone does not show or
+  retain them. Inline Workflows descriptions keep pointer and keyboard activation unchanged.
 
 ## Capabilities
 

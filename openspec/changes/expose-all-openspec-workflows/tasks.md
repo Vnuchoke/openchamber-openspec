@@ -123,7 +123,42 @@ prefix. Rebuild before browser tests; do not pass test flags through `npm test`.
   creating real changes/sessions/worktrees or altering existing nonempty drafts. Record actual
   outcomes and unavailable checks. Preserve unrelated worktree changes, including `mise.toml`.
 
-## Task 7 acceptance (2026-11-03)
+## 8. Owner-hover-only ordinary descriptions
+
+- [x] 8.1 Add failing `ordinary tooltip hover only` regressions at the existing panel fake-host seam
+  before runtime changes: hover shows a description, pointer exit into the description's rectangle
+  immediately removes it even while owner focus remains, focus without hover does not show it, and
+  inline Workflows descriptions retain hover/keyboard behavior. Simplify the shared helper by removing
+  ordinary focus triggers and description-hover retention, preserving owner cleanup, Escape/click,
+  accessibility names, open-Workflows suppression and all action callbacks. Adapt previous hoverable/
+  focus-tooltip expectations to the new rule without weakening unrelated assertions. Update README;
+  do not alter the Workflows implementation, dependencies, settings or test seams.
+- [x] 8.2 Independently inspect the helper and regression evidence, rebuild, run `npm run check` and
+  full Firefox/WebKit panel suites, strict OpenSpec validation and `git diff --check`. Verify the
+  rendered pointer-exit and keyboard-focus behavior and unchanged Workflows descriptions in the
+  live extension without creating real changes/sessions/worktrees or changing composer drafts.
+  Record actual checks and limitations; mark this task only after verification.
+
+## Task 8 acceptance (2026-11-03)
+
+- RED: both new regressions failed before runtime changes: focus alone showed an ordinary tooltip,
+  and pointer movement onto its rectangle retained it (`/tmp/opencode/ordinary-hover-red.log`).
+- Parent build and focused ordinary/Workflows description regressions: 10/10, exit 0. Existing inline
+  Workflows implementation and action callbacks remain unchanged; obsolete ordinary focus and
+  description-rectangle retention were removed from the shared helper.
+- `mise exec -- npm run check`: exit 0, 193/193. Full panel suites: Chromium 129/129 within check,
+  Firefox 129/129 and WebKit 129/129, each exit 0. Final logs in `/tmp/opencode/`:
+  `ordinary-hover-final-check.log`, `ordinary-hover-final-firefox.log`, `ordinary-hover-final-webkit.log`.
+- Strict OpenSpec validation and `git diff --check`: exit 0. No dependencies, settings or permissions
+  changed. crapper/dryer/mutator are unavailable and were not installed.
+- Live Chrome checks after Disable/Enable confirmed Enabled, ordinary hover/exit behavior on board,
+  detail and dialog, no tooltip for keyboard focus without hover, disappearance while the owner
+  retained focus, and unchanged inline Workflows pointer/keyboard descriptions. The description-
+  rectangle exit is covered by actual pointer-coordinate tests in all three engines at 320/1076px
+  in both themes. No real change/session/worktree was created and composer drafts were untouched.
+  Screen-reader speech was not tested.
+
+## Previous task 7 acceptance (2026-11-03, before task 8)
 
 - RED: the two initial regressions failed before runtime changes: open-trigger tooltip remained
   visible and workflow entries had no description (`/tmp/opencode/workflow-exclusive-red.log`).
