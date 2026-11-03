@@ -37,7 +37,7 @@ single test seam and a browser selector within the same file, without a new help
   interpreter, SDK upgrade, new dependency, permission or service route.
 - No new workflow stages, verification artifact support, persisted UI settings or metadata migration.
 - No bulk-selection UI in the extension: the Bulk archive agent workflow owns selection and checks.
-- No custom popup system, nested workflow menus, draft backup, cancellation protocol or retries.
+- No custom menu system, nested workflow menus, draft backup, cancellation protocol or retries.
 - Do not edit or archive the separate `add-update-button-to-ready-change` or `add-verification-stage`
   scaffolds. The former overlaps this change's Update access; the latter's verification-stage idea
   is explicitly outside this change.
@@ -79,10 +79,40 @@ Workflows trigger after the existing quick-action group; their entries are Conti
 tasks, Update change, Sync specs, Archive change, Verify change, Explore ideas.
 
 Keep the Planning quick Explore and Complete quick Verify. Replace Planning's primary label and
-behavior with `Continue artifacts`; retain lowercase apply/archive/verify quick labels. Rename only
+behavior with `Continue artifacts`; use sentence-case Apply/Archive/Verify/Explore quick labels. Rename
 the direct board creation trigger to `Create scaffold…`, keeping its dialog behavior. Extend
 `panel/index.html` layout only as needed for wrapping and reachable native popups at 320px; preserve
 existing footer spacing, search/detail shells, tab identity, focus and scroll.
+
+The follow-up UI request supersedes earlier lowercase-label decisions. All extension-owned buttons
+use sentence case (Refresh, Archive all, Cancel, Create, Delete, Start archiving), preserving names,
+acronyms and change IDs. SDK tabs and menu items retain their existing semantics.
+SDK 1.24.2 exports no tooltip primitive and ButtonProps has no description field. A small helper
+in existing `help-button.ts` attaches `role="tooltip"` and `aria-describedby` to existing buttons;
+it does not wrap mounting or change callbacks. Descriptions explain outcomes, not labels. Show on
+hover/focus, keep hoverable, dismiss on Escape/activation/leave/blur, update with stage, and dispose
+with the owning control. Use theme tokens and fixed placement clamped/flipped within the iframe.
+Prefer placement above the control. Descriptions are pointer-transparent so wrapped neighboring
+buttons remain clickable; while visible, pointer coordinates retain hover over the description's
+rectangle. Real pointer movement, not stationary re-entry after DOM changes, changes the hover owner.
+Unchanged owner updates retain the visible description instead of dismissing it on session repaint.
+Escape does not consume the native dialog/menu dismissal: preserve existing overlay closing and
+focus restoration, rather than adding a second-keypress requirement just for descriptions.
+Describe Workflows as choosing an unsent prompt; Apply as choosing current-chat draft or explicit
+worktree launch; Archive all as opening confirmation for a completed-only session launch.
+Cover navigation, Help/Copy, retries and dialog buttons as well as workflow/menu triggers.
+The follow-up Workflows request supersedes the earlier menuitem exclusion. Keep native SDK keyboard
+navigation and focus, but decorate each workflow entry with a short outcome description from its
+existing registry. Reveal only the active row's description in normal flow, not as a floating layer
+over the list; preserve the item's accessible name and connect its description with aria-describedby.
+Observe the mounted menu's child replacement and aria-activedescendant because SDK 1.24.2 exposes
+neither description props nor open/close callbacks. Keep decoration idempotent through SDK repaints
+and dispose the observer with the menu. Bound popup width before SDK placement, keep its expanded
+content within the viewport, and ensure the active description remains reachable by native scrolling.
+The ordinary tooltip helper must refuse display whenever a visible Workflows list exists, including
+the invoking trigger or unrelated buttons. Its visible-description observer removes an existing
+description on opening; dismissal restores ordinary hover/focus behavior. No new tooltip manager,
+SDK patch, polling, reads or workflow dispatch path is introduced.
 
 The named Apply tasks entry always composes in the current chat. The existing Apply destination
 menu alone offers Run in new worktree. Canonical Bulk archive composes its own skill prompt and
@@ -164,9 +194,11 @@ for all three engines. Other test files remain unchanged; report their actual br
 
 - [Existing Planning users expect a complete plan] → The user explicitly chose one-artifact Continue;
   name the interaction change in README. Global Propose/FF remain available for new changes.
-- [More than eight implementation targets] → The bounded reach is five existing panel TypeScript
-  files, `test/panel.test.mjs`, README, the generated `panel/main.js`, and `panel/index.html` only if
-  needed for layout: at most nine paths, with no new module or service. Do not broaden it silently.
+- [Expanded UI scope] → The user's follow-up authorizes existing panel button owners, dialogs,
+  help/document/tasks views, stylesheet, README, generated panel bundle and existing test selectors.
+  New behavioral tests remain solely in `test/panel.test.mjs`; `test/integration.test.mjs` only adapts
+  existing selectors/prompt expectations. No new files, test seam, dependency, service or protocol.
+  Previously approved document refresh retention and planning-scope invalidation remain unchanged.
 - [Menu state can repaint while open] → Capture its original context and distinguish named actions
   from stage-specific quick actions; use fake-host tests, not new data fetches, to pin this behavior.
 - [A skill exists on disk but is unavailable to the active agent] → Document delivery/allowlist
@@ -186,8 +218,12 @@ slice usable on its own, but do not claim the full twelve-workflow goal until ev
    Run `npm run check`, `OPENSPEC_TEST_BROWSER=firefox node --test test/panel.test.mjs` and
    `OPENSPEC_TEST_BROWSER=webkit node --test test/panel.test.mjs`. Unsupported engines must fail,
    not fall back to Chromium. Required installs need separate permission if not already present.
-3. Follow AGENTS.md's live-host disable/enable procedure and check both extension surfaces with
-   Playwright. Preparing new drafts, keyboard dismissal and cancelling confirmation dialogs suffice
+3. Follow AGENTS.md's live-host disable/enable procedure and check both extension surfaces. During
+   implementation the user approved the authenticated Chrome/browser MCP as an exception to the
+   original isolated-Playwright method: the latter reaches the password-protected host's unlock
+   screen and this environment has no GUI for manual login. Do not read passwords/cookies. Use only
+   the task's browser tab, verify iframe access, and do not replace an existing nonempty draft.
+   Preparing a draft only when empty, keyboard dismissal and cancelling confirmation dialogs suffice
    for the no-write paths. Real session/worktree creation or scaffold creation needs explicit
    authorization before the live check; simulated paths remain covered by the fake host.
 4. Report each engine, exit status, live-host result and available crapper/dryer/mutator checks

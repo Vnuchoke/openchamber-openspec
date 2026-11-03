@@ -2,6 +2,70 @@
 
 ## ADDED Requirements
 
+### Requirement: Button labels and descriptions communicate outcomes accessibly
+
+Extension-owned buttons SHALL use sentence case, preserving names, acronyms and change IDs.
+Outcome descriptions SHALL appear on hover and keyboard focus, linked with aria-describedby without
+replacing accessible names. They SHALL remain hoverable, dismissible and viewport-contained in both
+themes. Description lifecycle SHALL follow the owning control without changing action semantics.
+
+#### Scenario: Update or remove a described control
+
+- **WHEN** a control changes stage, becomes hidden or disabled, or is removed
+- **THEN** its visible description is dismissed and subsequent descriptions match the current action
+- **AND** removal disposes the description and listeners without remounting retained UI shells
+- **AND** SDK menuitems and artifact tabs keep their existing interaction semantics
+
+#### Scenario: Distinguish side effects before activation
+
+- **WHEN** the user hovers or focuses a workflow, scaffold or archive control
+- **THEN** its description distinguishes an editable unsent prompt, direct scaffold write or
+  confirmation followed by session/worktree creation and submission
+- **AND** Continue artifacts describes at most one planning artifact, while Apply offers destination
+  selection and Archive all opens confirmation for completed changes only
+
+#### Scenario: Inspect and dismiss without acting
+
+- **WHEN** a user focuses or hovers an enabled button, then presses Escape
+- **THEN** its description disappears without invoking its action or reading data
+- **AND** focus stays on a standalone button; inside a native dialog or menu, existing Escape
+  dismissal and focus restoration remain in effect rather than requiring an extra Escape
+
+#### Scenario: Use adjacent wrapped controls
+
+- **WHEN** a description overlaps another action in a narrow, wrapped toolbar
+- **THEN** the neighboring button remains clickable without first dismissing the description
+- **AND** hovering the description keeps its text readable without intercepting that click
+- **AND** unchanged session updates do not dismiss the focused button's description
+
+### Requirement: Open Workflows menus exclusively describe their own entries
+
+While a Workflows list is open, descriptions outside that list, including its trigger's description,
+SHALL be hidden and suppressed. Every global and change workflow SHALL have a short outcome
+description shown on pointer hover or keyboard activation of its row. Descriptions SHALL remain
+inside the active row without covering the list or adjacent entries. Native menu interaction and
+workflow routing SHALL remain unchanged.
+
+#### Scenario: Suppress unrelated descriptions until dismissal
+
+- **WHEN** Workflows opens on the board, a card or a change detail
+- **THEN** existing ordinary descriptions disappear and hovering its trigger or other buttons cannot
+  display them until the list closes
+- **AND** closing or disposing the menu restores ordinary description behavior without extra reads
+
+#### Scenario: Describe every workflow by pointer and keyboard
+
+- **WHEN** a user hovers a workflow or navigates to it with Arrow keys, Home or End
+- **THEN** its description explains the unsent prompt's intended workflow result
+- **AND** its accessible name, original target, keyboard focus and selection behavior are preserved
+- **AND** switching entries, SDK repaint, theme changes and dismissal leave no stale description
+
+#### Scenario: Reach the final entry in a narrow menu
+
+- **WHEN** a list is shown at 320px or desktop width in either theme
+- **THEN** all entries and their descriptions are reachable without overlap or viewport clipping
+- **AND** Escape dismisses the list and restores focus as before without invoking a workflow
+
 ### Requirement: Global workflow menu exposes new-change and project workflows
 
 The board SHALL offer a `Workflows` menu containing Propose change, Explore ideas, New change,
@@ -106,7 +170,7 @@ workflow SHALL decide how to handle complete planning or a partially populated a
 The global Bulk archive entry SHALL prepare an unsent `openspec-bulk-archive-change` prompt. It
 SHALL preserve the workflow's explicit change selection, conflict assessment and batch confirmation,
 not preselect changes from visible cards or search results. It SHALL remain distinct from the
-existing confirmed `archive all` shortcut that starts a session for completed changes only.
+existing confirmed `Archive all` shortcut that starts a session for completed changes only.
 
 #### Scenario: Prepare interactive bulk archiving
 
@@ -117,7 +181,7 @@ existing confirmed `archive all` shortcut that starts a session for completed ch
 
 #### Scenario: Preserve the existing shortcut
 
-- **WHEN** a user chooses archive all instead of the Bulk archive menu entry
+- **WHEN** a user chooses Archive all instead of the Bulk archive menu entry
 - **THEN** the existing confirmation dialog and completed-only session-launch behavior remain in force
 
 ### Requirement: Workflow menus preserve accessibility and retained interface state
@@ -150,10 +214,10 @@ caret and scroll behavior; mounted menu handles SHALL be disposed with their own
 ### Requirement: Use OpenSpec workflow vocabulary consistently
 
 Cards and detail SHALL label the primary planning action `Continue artifacts`, both ready and
-in-progress implementation actions `apply`, and the completed primary action `archive`. The
-separate secondary completed action SHALL be `verify`, available independently of archive. Board
+in-progress implementation actions `Apply`, and the completed primary action `Archive`. The
+separate secondary completed action SHALL be `Verify`, available independently of archive. Board
 stage headings and detail badges SHALL use Planning, Ready, In Progress and Complete. The board's
-manual reload action SHALL be labelled `refresh`. These are presentations of existing CLI-derived
+manual reload action SHALL be labelled `Refresh`. These are presentations of existing CLI-derived
 progress, not new persisted states. Standard artifact labels SHALL remain Proposal, Specs, Design
 and Tasks; custom artifact identifiers SHALL remain supported. Canonical Propose SHALL be offered
 globally rather than as an instruction to create another copy of an existing scaffold.
@@ -163,12 +227,12 @@ globally rather than as an instruction to create another copy of an existing sca
 - **WHEN** a user views a change in each of the four stages and opens its detail
 - **THEN** the primary labels match on both surfaces and call `openspec-continue-change`,
   `openspec-apply-change`, `openspec-apply-change` and `openspec-archive-change` respectively
-- **AND** Complete exposes secondary verify independently of archive
+- **AND** Complete exposes secondary Verify independently of Archive
 - **AND** no action is labelled merely continue when it actually resumes implementation through Apply
 
 ### Requirement: Explore the goal from a Planning change card
 
-Every available Planning change card SHALL retain a compact secondary `explore` action alongside
+Every available Planning change card SHALL retain a compact secondary `Explore` action alongside
 Continue artifacts. Other stages SHALL NOT show that quick action, but SHALL offer Explore ideas
 through their named Workflows menu. Both forms SHALL name the change, include its recorded goal
 when present and invoke `openspec-explore` to investigate the goal, relevant code, options and
@@ -178,7 +242,7 @@ the goal if necessary.
 
 #### Scenario: Explore a stated goal
 
-- **WHEN** the user chooses explore on a Planning card or Explore ideas in its named menu
+- **WHEN** the user chooses Explore on a Planning card or Explore ideas in its named menu
 - **THEN** an exploration prompt for that change and its stated goal is prepared
 - **AND** the stage, task counts and artifact counts remain unchanged
 
@@ -248,7 +312,7 @@ accepted host request or undoes its effects.
 
 ### Requirement: Select an Apply destination through a native menu
 
-Ready and In Progress changes SHALL retain an apply action menu on both board cards and detail.
+Ready and In Progress changes SHALL retain an Apply action menu on both board cards and detail.
 The menu SHALL offer `Prepare in current chat` and `Run in new worktree`, using host-consistent
 controls with keyboard operation and dismissal. Opening or dismissing it SHALL NOT compose, create
 or send anything. Planning SHALL use Continue artifacts and Complete SHALL retain archive.
@@ -295,21 +359,21 @@ workflow entry SHALL remain separate and SHALL NOT submit this dialog.
 
 ### Requirement: Confirm bulk archiving from the board
 
-The board SHALL retain archive all beside Create scaffold…, using a native secondary button, an
+The board SHALL retain Archive all beside Create scaffold…, using a native secondary button, an
 archive icon and the same small control size. It SHALL target completed changes across the board,
 independently of search filtering. The action SHALL be disabled without a resolved OpenSpec context,
 while the board is loading, when no available Complete change is known, or while a launch is
 pending. Activation SHALL open an accessible confirmation dialog explaining that it creates a new
 session and submits a prompt, skips unfinished changes and leaves the board open. Controls SHALL
-be labelled cancel and start archiving. Cancellation, including Escape, SHALL create no session
+be labelled Cancel and Start archiving. Cancellation, including Escape, SHALL create no session
 and submit no prompt. The separate Bulk archive workflow entry SHALL NOT bypass this shortcut's
 confirmation or inherit its completed-only selection.
 
 #### Scenario: Confirm or cancel
 
-- **WHEN** the user activates archive all
+- **WHEN** the user activates Archive all
 - **THEN** the dialog opens without creating a session or submitting a prompt
-- **AND** only start archiving authorizes the launch; cancel or Escape dismisses it without effects
+- **AND** only Start archiving authorizes the launch; Cancel or Escape dismisses it without effects
 
 #### Scenario: Filtered or empty board
 
