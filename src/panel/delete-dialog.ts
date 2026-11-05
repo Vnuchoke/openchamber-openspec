@@ -2,6 +2,13 @@ import { mountButton } from "@openchamber/sdk/ui";
 import { ServiceRequestError, type Client, type Scope } from "./client.js";
 import { addButtonIcon } from "./button-icon.js";
 import { mountTooltip } from "./help-button.js";
+import {
+  english,
+  describeError,
+  presentMessage,
+  type UiText,
+  type LocalMessage,
+} from "./localization.js";
 
 type Target = { scope: Scope; epoch: number; selection: number; name: string };
 
@@ -13,6 +20,8 @@ export function mountDeleteDialog(
     removed: (target: Target) => void;
   },
 ) {
+  let text = english;
+  let messageText: LocalMessage | string = "";
   const dialog = document.createElement("dialog");
   const heading = document.createElement("h2");
   heading.id = "delete-change-title";
@@ -49,10 +58,10 @@ export function mountDeleteDialog(
     dialog.close();
     target = null;
     mode = "confirming";
-    message.textContent = "";
+    messageText = "";
   }
   const cancel = mountButton(cancelRoot, {
-    label: "Cancel",
+    label: text.cancel,
     variant: "secondary",
     size: "sm",
     onClick: () => {
@@ -60,7 +69,7 @@ export function mountDeleteDialog(
     },
   });
   const retry = mountButton(retryRoot, {
-    label: "Retry read",
+    label: text.retryRead,
     variant: "secondary",
     size: "sm",
     onClick: () => {
@@ -68,7 +77,7 @@ export function mountDeleteDialog(
     },
   });
   const confirm = mountButton(deleteRoot, {
-    label: "Delete",
+    label: text.delete,
     variant: "destructive",
     size: "sm",
     onClick: () => {
@@ -78,31 +87,37 @@ export function mountDeleteDialog(
   addButtonIcon(deleteRoot, "delete");
   actions.append(cancelRoot, retryRoot, deleteRoot);
   const tooltips = [
-    mountTooltip(
-      cancelRoot.querySelector("button")!,
-      "Close this confirmation without removing the change.",
-    ),
-    mountTooltip(
-      retryRoot.querySelector("button")!,
-      "Read the original project to resolve the deletion outcome; do not retry deletion.",
-    ),
-    mountTooltip(
-      deleteRoot.querySelector("button")!,
-      "Permanently remove this change's planning folder; implementation and main specifications remain.",
-    ),
+    mountTooltip(cancelRoot.querySelector("button")!, text.deleteCloseDescription),
+    mountTooltip(retryRoot.querySelector("button")!, text.deleteRetryDescription),
+    mountTooltip(deleteRoot.querySelector("button")!, text.deleteSubmitDescription),
   ];
   dialog.append(heading, description, message, actions);
   root.append(dialog);
   function display() {
-    tooltips.forEach((tooltip) => tooltip.update());
+    const descriptions = [
+      text.deleteCloseDescription,
+      text.deleteRetryDescription,
+      text.deleteSubmitDescription,
+    ];
+    tooltips.forEach((tooltip, index) => tooltip.update(descriptions[index]));
+    if (target) {
+      heading.textContent = text.deleteHeading(target.name);
+      description.textContent = text.deleteWarning(target.name);
+    }
+    message.textContent = presentMessage(text, messageText);
     message.hidden = !message.textContent;
     retryRoot.hidden = mode !== "unresolved";
     deleteRoot.hidden = mode !== "confirming" && mode !== "deleting";
     cancel.update({
       disabled: mode === "deleting" || mode === "reconciling" || mode === "unresolved",
-      label: mode === "present" ? "Close" : "Cancel",
+      label: mode === "present" ? text.close : text.cancel,
     });
-    confirm.update({ disabled: mode !== "confirming", loading: mode === "deleting" });
+    retry.update({ label: text.retryRead });
+    confirm.update({
+      label: text.delete,
+      disabled: mode !== "confirming",
+      loading: mode === "deleting",
+    });
   }
   dialog.addEventListener("cancel", (event) => {
     if (mode === "deleting" || mode === "reconciling" || mode === "unresolved")
@@ -112,13 +127,13 @@ export function mountDeleteDialog(
     if (mode !== "deleting" && mode !== "reconciling") {
       target = null;
       mode = "confirming";
-      message.textContent = "";
+      messageText = "";
     }
   });
   async function reconcile(attempt: Target) {
     if (matches(attempt) && target === attempt) {
       mode = "reconciling";
-      message.textContent = "Checking the original project for this change…";
+      messageText = { key: "deleteChecking" };
       display();
     }
     try {
@@ -134,22 +149,20 @@ export function mountDeleteDialog(
         callbacks.removed(attempt);
       } else {
         mode = "present";
-        message.textContent =
-          "Removal was not confirmed. The change is still listed. Close and confirm again before another attempt.";
+        messageText = { key: "deletePresent" };
         display();
       }
     } catch {
       if (disposed || !matches(attempt) || target !== attempt) return;
       unresolved.add(key(attempt));
       mode = "unresolved";
-      message.textContent =
-        "Deletion outcome is unresolved. Retry the read of the original project before another attempt.";
+      messageText = { key: "deleteUnresolved" };
       display();
     }
   }
   async function remove(attempt: Target) {
     mode = "deleting";
-    message.textContent = "";
+    messageText = "";
     display();
     try {
       await client.delete(attempt.scope, attempt.name);
@@ -166,7 +179,7 @@ export function mountDeleteDialog(
       ) {
         if (!matches(attempt) || target !== attempt) return;
         mode = "present";
-        message.textContent = caught.message;
+        messageText = describeError(caught);
         display();
       } else {
         // A lost response or missing target is resolved against a new original-context listing.
@@ -179,23 +192,20 @@ export function mountDeleteDialog(
       if (dialog.open || disposed || !matches(attempt)) return;
       target = attempt;
       mode = unresolved.has(key(attempt)) ? "unresolved" : "confirming";
-      heading.textContent = `Delete ${attempt.name}?`;
-      description.textContent = `Permanently remove the planning folder for ${attempt.name}? This does not undo implementation or delete main specifications.`;
-      message.textContent =
-        mode === "unresolved"
-          ? "Deletion outcome is unresolved. Retry the read of the original project before another attempt."
-          : "";
+      messageText = mode === "unresolved" ? { key: "deleteUnresolved" } : "";
       display();
       dialog.showModal();
       cancelRoot.querySelector("button")?.focus();
     },
-    update() {
+    update(next: UiText) {
+      text = next;
       if (target && !matches(target)) {
         if (mode === "deleting" || mode === "reconciling" || mode === "unresolved")
           unresolved.add(key(target));
         dialog.close();
         target = null;
       }
+      display();
     },
     dispose() {
       tooltips.forEach((tooltip) => tooltip.dispose());

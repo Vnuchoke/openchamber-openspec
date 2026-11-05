@@ -7,6 +7,7 @@ import {
   type ListingEntry,
 } from "../contracts.js";
 import type { ChangeSummary } from "../model.js";
+import { ownedError } from "./localization.js";
 
 export class ServiceRequestError extends Error {
   constructor(
@@ -22,9 +23,12 @@ export type Listing = Scope & { changes: ListingEntry[] };
 export type Scope = { directory: string; root: string; planning: string };
 
 function invalid(): ServiceRequestError {
-  return new ServiceRequestError(
-    "BAD_SERVICE_DATA",
-    "The local OpenSpec service returned invalid data.",
+  return ownedError(
+    new ServiceRequestError(
+      "BAD_SERVICE_DATA",
+      "The local OpenSpec service returned invalid data.",
+    ),
+    "badServiceData",
   );
 }
 
@@ -83,9 +87,15 @@ export function createClient(host: HostClient) {
       });
       const listing = decode(value, decodeListing);
       if (listing.directory !== directory || (expectedRoot && listing.root !== expectedRoot))
-        throw new ServiceRequestError("ROOT_CHANGED", "OpenSpec root changed.");
+        throw ownedError(
+          new ServiceRequestError("ROOT_CHANGED", "OpenSpec root changed."),
+          "rootChanged",
+        );
       if (expectedPlanning && listing.planning !== expectedPlanning)
-        throw new ServiceRequestError("PLANNING_CHANGED", "OpenSpec planning target changed.");
+        throw ownedError(
+          new ServiceRequestError("PLANNING_CHANGED", "OpenSpec planning target changed."),
+          "planningTargetChanged",
+        );
       return listing;
     },
     summaries: async (
@@ -103,16 +113,25 @@ export function createClient(host: HostClient) {
         decodeSummaries,
       );
       if (value.root !== scope.root)
-        throw new ServiceRequestError("ROOT_CHANGED", "OpenSpec root changed.");
+        throw ownedError(
+          new ServiceRequestError("ROOT_CHANGED", "OpenSpec root changed."),
+          "rootChanged",
+        );
       if (value.planning !== scope.planning)
-        throw new ServiceRequestError("PLANNING_CHANGED", "OpenSpec planning target changed.");
+        throw ownedError(
+          new ServiceRequestError("PLANNING_CHANGED", "OpenSpec planning target changed."),
+          "planningTargetChanged",
+        );
       const byId = new Map(value.changes.map((item) => [item.id, item]));
       return entries.map((entry) => {
         const item = byId.get(entry.id);
         if (!item)
           return {
             id: entry.id,
-            error: new ServiceRequestError("CHANGE_UNAVAILABLE", "Change is no longer listed."),
+            error: ownedError(
+              new ServiceRequestError("CHANGE_UNAVAILABLE", "Change is no longer listed."),
+              "changeUnlisted",
+            ),
           };
         if ("error" in item)
           return {
@@ -184,17 +203,19 @@ export function createClient(host: HostClient) {
           caught.code !== "CLI_TIMEOUT"
         )
           throw caught;
-        throw new ServiceRequestError(
-          "CREATE_UNKNOWN",
-          "Creation outcome is unknown; check the original project before retrying.",
-          "unknown",
+        throw ownedError(
+          new ServiceRequestError(
+            "CREATE_UNKNOWN",
+            "Creation outcome is unknown; check the original project before retrying.",
+            "unknown",
+          ),
+          "createUnknown",
         );
       }
       if (value.root !== scope.root || value.change !== name)
-        throw new ServiceRequestError(
-          "BAD_SERVICE_DATA",
-          "Creation outcome is unknown.",
-          "unknown",
+        throw ownedError(
+          new ServiceRequestError("BAD_SERVICE_DATA", "Creation outcome is unknown.", "unknown"),
+          "createUnknownData",
         );
     },
     delete: async (scope: Scope, change: string): Promise<void> => {
@@ -215,17 +236,23 @@ export function createClient(host: HostClient) {
           caught.code !== "BAD_SERVICE_DATA"
         )
           throw caught;
-        throw new ServiceRequestError(
-          "DELETE_UNKNOWN",
-          "Deletion outcome is unknown; check the original project before retrying.",
-          "unknown",
+        throw ownedError(
+          new ServiceRequestError(
+            "DELETE_UNKNOWN",
+            "Deletion outcome is unknown; check the original project before retrying.",
+            "unknown",
+          ),
+          "deleteUnknown",
         );
       }
       if (value.root !== scope.root || value.change !== change)
-        throw new ServiceRequestError(
-          "DELETE_UNKNOWN",
-          "Deletion outcome is unknown; check the original project before retrying.",
-          "unknown",
+        throw ownedError(
+          new ServiceRequestError(
+            "DELETE_UNKNOWN",
+            "Deletion outcome is unknown; check the original project before retrying.",
+            "unknown",
+          ),
+          "deleteUnknown",
         );
     },
   };

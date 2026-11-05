@@ -4,7 +4,8 @@ import type { DerivedChange } from "../model.js";
 import type { ReadState } from "./resources.js";
 import { mountDocumentView } from "./document-view.js";
 import { mountTasksView } from "./tasks-view.js";
-import { changeWorkflows, stageLabel, type ChangeWorkflow } from "./workflow.js";
+import { changeWorkflows, type ChangeWorkflow } from "./workflow.js";
+import { english, errorMessage, type UiText } from "./localization.js";
 import { mountPrimaryAction, mountWorkflowMenu, type PrimaryIntent } from "./primary-action.js";
 import { addButtonIcon } from "./button-icon.js";
 import { mountAreaBadges } from "./area-badges.js";
@@ -12,6 +13,7 @@ import { documentFormat } from "./document-renderer.js";
 import { mountTooltip } from "./help-button.js";
 
 export type DetailState = {
+  text: UiText;
   change: DerivedChange;
   selectedArtifact: string;
   activeView: "document" | "tasks";
@@ -30,18 +32,6 @@ const tones = {
   ready: "info",
   progress: "primary",
   complete: "success",
-} as const;
-const artifactLabels: Record<string, string> = {
-  proposal: "Proposal",
-  specs: "Specs",
-  design: "Design",
-  tasks: "Tasks",
-};
-const readiness = {
-  done: "Written",
-  ready: "Ready to write",
-  blocked: "Blocked",
-  skipped: "Skipped",
 } as const;
 const tabId = (id: string) => `artifact:${id}`;
 const fallbackId = "tasks:fallback";
@@ -251,6 +241,7 @@ export function mountDetailView(
   let changeId = "";
   let artifactId = "";
   let scrollSelection = "";
+  let previousText: UiText = english;
   function reset() {
     areas.update([]);
     tasksView.reset();
@@ -287,34 +278,65 @@ export function mountDetailView(
   }
   return {
     update(state: DetailState | null) {
-      tooltips.forEach((tooltip) => tooltip.update());
       shell.hidden = !state;
       if (!state) {
+        tooltips.forEach((tooltip) => tooltip.update());
         workflows.update({ disabled: true, action: () => {} });
         reset();
         changeId = "";
         return;
       }
+      const text = state.text;
+      const retainedScroll = content.scrollTop;
+      const languageChanged = text !== previousText;
+      const selection = window.getSelection();
+      const retainedRange =
+        languageChanged &&
+        selection?.rangeCount &&
+        content.contains(selection.anchorNode) &&
+        content.contains(selection.focusNode)
+          ? selection.getRangeAt(0).cloneRange()
+          : null;
+      previousText = text;
+      tooltips.forEach((tooltip, index) =>
+        tooltip.update(
+          [
+            text.backDescription,
+            text.copyDescription,
+            text.detailRefreshDescription,
+            text.deleteDescription,
+            text.detailRetryDescription,
+            text.exploreDescription,
+            text.verifyDescription,
+          ][index],
+        ),
+      );
+      backButton.setAttribute("aria-label", text.back);
+      copyButton.setAttribute("aria-label", text.copyName);
+      deleteButton.setAttribute("aria-label", text.deleteChange);
+      goal.setAttribute("aria-label", text.recordedObjective);
+      tabs.setAttribute("aria-label", text.planningArtifacts);
+      tabs.querySelector("[role=tablist]")?.setAttribute("aria-label", text.planningArtifacts);
       if (changeId !== state.change.id) {
         reset();
         changeId = state.change.id;
       }
       title.textContent = state.change.id;
       areas.update(state.change.affectedAreas);
-      goal.textContent = state.change.goal ?? "Goal unavailable";
+      if (goal.textContent !== (state.change.goal ?? text.goalUnavailable))
+        goal.textContent = state.change.goal ?? text.goalUnavailable;
       stageBadge.update({
-        label: stageLabel(state.change.stage),
+        label: text.stages[state.change.stage],
         tone: tones[state.change.stage],
       });
       unavailable.hidden = !state.unavailable;
-      unavailable.textContent = state.unavailable
-        ? "This change is no longer available. Refresh or return to the board."
-        : "";
-      refresh.update({ loading: state.loading });
+      unavailable.textContent = state.unavailable ? text.detailUnavailable : "";
+      refresh.update({ label: text.refresh, loading: state.loading });
       refreshMessage.textContent = state.refreshError ?? "";
       refreshIssue.hidden = !state.refreshError;
-      retry.update({ disabled: state.loading });
+      retry.update({ label: text.retry, disabled: state.loading });
       action.update({
+        text,
         id: state.change.id,
         stage: state.change.stage,
         disabled: state.unavailable,
@@ -322,15 +344,20 @@ export function mountDetailView(
         action: state.primaryAction,
       });
       exploreRoot.hidden = state.change.stage !== "planning";
-      workflows.update({ disabled: state.unavailable, action: state.workflow });
-      explore.update({ disabled: state.unavailable });
-      deleteAction.update({ disabled: state.unavailable });
+      workflows.update({
+        text,
+        labels: text.changeWorkflows,
+        disabled: state.unavailable,
+        action: state.workflow,
+      });
+      explore.update({ label: text.explore, disabled: state.unavailable });
+      deleteAction.update({ label: text.delete, disabled: state.unavailable });
       verifyRoot.hidden = state.change.stage !== "complete";
-      verify.update({ disabled: state.unavailable });
+      verify.update({ label: text.verify, disabled: state.unavailable });
       currentOwner = taskArtifact(state.change);
       const items = state.change.artifacts.map((item) => ({
         id: tabId(item.id),
-        label: artifactLabels[item.id] ?? item.id,
+        label: text.artifactLabels[item.id] ?? item.id,
         count:
           item.id === "specs"
             ? (state.change.documents ?? []).filter((document) => document.artifactId === item.id)
@@ -340,7 +367,11 @@ export function mountDetailView(
               : undefined,
       }));
       if (!currentOwner)
-        items.push({ id: fallbackId, label: "Tasks", count: state.change.totalTasks });
+        items.push({
+          id: fallbackId,
+          label: text.artifactLabels.tasks!,
+          count: state.change.totalTasks,
+        });
       const activeId =
         state.activeView === "tasks"
           ? currentOwner
@@ -349,19 +380,24 @@ export function mountDetailView(
           : tabId(state.selectedArtifact);
       const signature = JSON.stringify([items, activeId]);
       if (signature !== tabSignature) {
-        const focused = tabs.contains(document.activeElement);
+        const focused = tabs.contains(document.activeElement)
+          ? (document.activeElement as HTMLElement).dataset.id
+          : null;
         tabControl.update({ items, activeId });
         tabSignature = signature;
         tabs.querySelectorAll<HTMLElement>("[role=tab]").forEach((tab, index) => {
           tab.id = `change-detail-tab-${index}`;
           tab.setAttribute("aria-controls", content.id);
         });
-        if (focused) tabs.querySelector<HTMLElement>('[role=tab][aria-selected="true"]')?.focus();
+        if (focused)
+          tabs
+            .querySelector<HTMLElement>(`[role=tab][data-id="${CSS.escape(focused)}"]`)
+            ?.focus({ preventScroll: true });
       }
       tabs.querySelectorAll<HTMLElement>("[role=tab]").forEach((tab, index) => {
         const artifact = state.change.artifacts[index];
         if (!artifact) return;
-        const label = `${items[index].label} · ${readiness[artifact.status]}${items[index].count === undefined ? "" : ` ${items[index].count}`}`;
+        const label = `${items[index].label} · ${text.readiness[artifact.status]}${items[index].count === undefined ? "" : ` ${items[index].count}`}`;
         if (tab.getAttribute("aria-label") !== label) tab.setAttribute("aria-label", label);
       });
       content.setAttribute(
@@ -381,18 +417,18 @@ export function mountDetailView(
         }) ?? [];
       const readinessMessage =
         selected?.status === "ready"
-          ? "Ready to write this artefact. Continue planning in chat."
+          ? text.readyToWrite
           : selected?.status === "blocked"
             ? unresolved.length
-              ? `Blocked until ${unresolved.join(", ")} is written or skipped.`
-              : "Blocked by planning prerequisites; their details are not available."
+              ? text.blockedUntil(unresolved)
+              : text.blockedUnknown
             : selected?.status === "skipped"
-              ? "This artefact was skipped."
+              ? text.skippedArtifact
               : "";
       documents.hidden = state.activeView === "tasks";
       tasks.hidden = state.activeView !== "tasks";
       if (state.activeView === "tasks" && !state.refreshError)
-        tasksView.update(state.tasks, !state.unavailable, readinessMessage);
+        tasksView.update(state.tasks, !state.unavailable, readinessMessage, text);
       const nextScrollSelection = `${state.activeView}:${state.selectedArtifact}`;
       if (scrollSelection !== nextScrollSelection) {
         scrollSelection = nextScrollSelection;
@@ -408,9 +444,7 @@ export function mountDetailView(
       readinessNote.textContent =
         state.activeView === "document" && !state.unavailable && !available.length
           ? readinessMessage ||
-            (state.selectedArtifact
-              ? "This artefact has no available documents yet."
-              : "This change has no available planning documents.")
+            (state.selectedArtifact ? text.noArtifactDocuments : text.noPlanningDocuments)
           : "";
       readinessNote.hidden = !!state.refreshError || !readinessNote.textContent;
       content.hidden = !!state.refreshError;
@@ -426,17 +460,18 @@ export function mountDetailView(
         const key = documentKey(descriptor.artifactId, descriptor.selector);
         const entry = file(descriptor);
         const status = entry.node.querySelector<HTMLElement>("summary .document-status");
-        if (status) status.textContent = state.files.get(key)?.error ? " · Read failed" : "";
+        if (status) status.textContent = state.files.get(key)?.error ? text.readFailed : "";
         const current = state.files.get(key);
         entry.view.update({
+          uiText: text,
           text: current?.value ?? "",
           format: documentFormat(descriptor.selector),
           hasContent: current?.value !== null && !!current,
           status:
             !state.unavailable && !current?.error && current?.value == null
-              ? "Loading document…"
+              ? text.loadingDocument
               : null,
-          error: state.unavailable ? null : (current?.error?.message ?? null),
+          error: !state.unavailable && current?.error ? errorMessage(current.error, text) : null,
           retry: () => callbacks.retryDocument(descriptor.artifactId, descriptor.selector),
           canRetry: !state.unavailable,
         });
@@ -444,6 +479,12 @@ export function mountDetailView(
         if (!multi) entry.node.open = true;
         if (documents.children[index] !== entry.node)
           documents.insertBefore(entry.node, documents.children[index] ?? null);
+      }
+      if (languageChanged) content.scrollTop = retainedScroll;
+      // WebKit clears document selection when SDK tabs replace the focused tab.
+      if (retainedRange && selection) {
+        selection.removeAllRanges();
+        selection.addRange(retainedRange);
       }
     },
     dispose() {

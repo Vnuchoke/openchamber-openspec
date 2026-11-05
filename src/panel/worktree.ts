@@ -1,4 +1,5 @@
 import type { HostClient } from "@openchamber/sdk";
+import { english, ownedError } from "./localization.js";
 
 async function ready<T extends { state: "loading" | "ready" | "error" }>(
   read: () => Promise<T>,
@@ -7,9 +8,7 @@ async function ready<T extends { state: "loading" | "ready" | "error" }>(
   const initial = await read();
   if (initial.state === "ready") return initial;
   if (initial.state === "error")
-    throw new Error(
-      "Host workspace inspection failed. Inspect worktrees and sessions before trying again.",
-    );
+    throw ownedError(new Error(english.workspaceInspectionFailed), "workspaceInspectionFailed");
   let off: (() => void) | undefined;
   let settled = false;
   let timer: ReturnType<typeof setTimeout>;
@@ -17,13 +16,18 @@ async function ready<T extends { state: "loading" | "ready" | "error" }>(
     return await new Promise<T>((resolve, reject) => {
       timer = setTimeout(() => {
         settled = true;
-        reject(new Error("Host workspace inspection timed out. No creation was requested."));
+        reject(
+          ownedError(new Error(english.workspaceInspectionTimeout), "workspaceInspectionTimeout"),
+        );
       }, 20_000);
       void subscribe((value) => {
         if (value.state === "loading") return;
         settled = true;
         if (value.state === "ready") resolve(value);
-        else reject(new Error("Host workspace inspection failed."));
+        else
+          reject(
+            ownedError(new Error(english.workspaceInspectionError), "workspaceInspectionError"),
+          );
       }).then((unsubscribe) => {
         off = unsubscribe;
         if (settled) off();
@@ -63,9 +67,7 @@ export async function inspectWorktreeDestination(
     );
   }
   if (owners.length !== 1)
-    throw new Error(
-      "Cannot identify the originating registered project. No worktree was requested.",
-    );
+    throw ownedError(new Error(english.projectUnidentified), "projectUnidentified");
   const project = owners[0]!;
   const [trees, sessions] = await Promise.all([
     ready(
@@ -78,14 +80,20 @@ export async function inspectWorktreeDestination(
     ),
   ]);
   if (sessions.coverage.some((item) => item.state !== "ready"))
-    throw new Error("Session inspection is incomplete. Inspect the project before trying again.");
+    throw ownedError(new Error(english.sessionsIncomplete), "sessionsIncomplete");
   const collision = trees.worktrees.find((tree) => tree.name === name || tree.branch === name);
   const session = sessions.sessions.find(
     (session) => session.worktree?.name === name || session.items.some((item) => item.id === name),
   );
   if (collision || session)
-    throw new Error(
-      `Worktree or session for ${name} already exists${collision ? ` at ${collision.directory}` : ` (session ${session!.id})`}. Inspect it instead of creating another worktree.`,
+    throw ownedError(
+      new Error(english.worktreeCollision(name, collision?.directory ?? null, session?.id ?? null)),
+      {
+        key: "worktreeCollision",
+        name,
+        directory: collision?.directory ?? null,
+        session: session?.id ?? null,
+      },
     );
   return project;
 }

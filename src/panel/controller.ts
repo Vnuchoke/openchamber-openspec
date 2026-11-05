@@ -1,4 +1,17 @@
 import { HostRequestError, type HostClient } from "@openchamber/sdk";
+import { mountSelect } from "@openchamber/sdk/ui";
+import {
+  isLanguagePreference,
+  resolveLanguage,
+  uiText,
+  presentMessage,
+  describeError,
+  ownedError,
+  english,
+  type LanguagePreference,
+  type LocalMessage,
+  type UiText,
+} from "./localization.js";
 import { deriveChange, type DerivedChange } from "../model.js";
 import { documentKey, type Task } from "../contracts.js";
 import { createClient, ServiceRequestError, type Scope } from "./client.js";
@@ -8,7 +21,6 @@ import { mountDetailView, taskArtifact } from "./detail-view.js";
 import { mountCreateDialog } from "./create-dialog.js";
 import { mountDeleteDialog } from "./delete-dialog.js";
 import { mountArchiveDialog } from "./archive-dialog.js";
-import { archiveAllPrompt } from "./archive-prompt.js";
 import { inspectWorktreeDestination } from "./worktree.js";
 import {
   actionPrompt,
@@ -36,14 +48,14 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
   let changes: DerivedChange[] = [];
   let staleIds = new Set<string>();
   let unavailableIds = new Set<string>();
-  let failures: { id: string; error: string }[] = [];
+  let failures: { id: string; error: string | LocalMessage }[] = [];
   let listedCount = 0;
   let completedTasks = 0;
   let totalTasks = 0;
   let pendingSummaries = 0;
   let loading = false;
   let settled = false;
-  let errorMessage: string | null = null;
+  let errorMessage: string | LocalMessage | null = null;
   let search = "";
   let selectedChange: DerivedChange | null = null;
   let selectedArtifact = "";
@@ -59,6 +71,87 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
   const worktreeKey = (scope: Scope, id: string) =>
     JSON.stringify([scope.directory, scope.root, scope.planning, id]);
   let disposed = false;
+  let languagePreference: LanguagePreference = "auto";
+  let hostLocale = "en";
+  let preferenceReading = true;
+  let preferenceSaving = false;
+  let preferenceWarning:
+    "invalidPreference" | "readPreferenceFailed" | "writePreferenceFailed" | null = null;
+  let text: UiText = uiText("en");
+  const languageRow = document.createElement("div");
+  languageRow.className = "language-row";
+  const languageRoot = document.createElement("span");
+  const languageWarning = document.createElement("span");
+  languageWarning.className = "language-warning";
+  languageWarning.setAttribute("role", "status");
+  languageRow.append(languageRoot, languageWarning);
+  appRoot.classList.add("language-layout");
+  const languageSelect = mountSelect(languageRoot, {
+    label: text.language,
+    value: languagePreference,
+    options: [],
+    searchable: false,
+    disabled: true,
+    onChange: (value) => {
+      if (
+        disposed ||
+        preferenceReading ||
+        preferenceSaving ||
+        !isLanguagePreference(value) ||
+        value === languagePreference
+      )
+        return;
+      preferenceSaving = true;
+      preferenceWarning = null;
+      renderLanguage();
+      void host.storage
+        .set("ui.language", value)
+        .then(
+          () => {
+            if (!disposed) languagePreference = value;
+          },
+          () => {
+            if (!disposed) preferenceWarning = "writePreferenceFailed";
+          },
+        )
+        .finally(() => {
+          if (disposed) return;
+          preferenceSaving = false;
+          render();
+        });
+    },
+  });
+  const languageTrigger = languageRoot.querySelector("button")!;
+  const guardLanguage = (event: Event) => {
+    if (!preferenceSaving) return;
+    if (
+      event instanceof KeyboardEvent &&
+      !["Enter", " ", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
+    )
+      return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  languageTrigger.addEventListener("click", guardLanguage, true);
+  languageTrigger.addEventListener("keydown", guardLanguage, true);
+  function renderLanguage() {
+    const language = resolveLanguage(languagePreference, hostLocale);
+    text = uiText(language);
+    document.documentElement.lang = language;
+    languageSelect.update({
+      label: text.language,
+      value: languagePreference,
+      options: [
+        { id: "auto", label: text.auto },
+        { id: "en", label: "English" },
+        { id: "ru", label: "Русский" },
+      ],
+      disabled: preferenceReading,
+    });
+    languageTrigger.setAttribute("aria-disabled", String(preferenceReading || preferenceSaving));
+    languageTrigger.setAttribute("aria-busy", String(preferenceReading || preferenceSaving));
+    languageWarning.textContent = preferenceWarning ? text[preferenceWarning] : "";
+  }
 
   function invalidate() {
     epoch++;
@@ -90,7 +183,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
     const retainedSearch = search;
     invalidate();
     search = retainedSearch;
-    errorMessage = "Planning target changed. Refresh to establish the new scope.";
+    errorMessage = { key: "planningChanged" };
     render();
   }
 
@@ -151,7 +244,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
           !listed.has(pendingInspection.name)
         ) {
           pendingInspection = null;
-          errorMessage = "The observed change is no longer available for inspection.";
+          errorMessage = { key: "inspectionUnavailable" };
         }
         for (const change of changes)
           if (!listed.has(change.id)) resources.invalidateChange(current, change.id);
@@ -227,7 +320,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
               ...failures.filter((item) => item.id !== entry.id),
               {
                 id: entry.id,
-                error: caught instanceof Error ? caught.message : "Change could not be read.",
+                error: caught instanceof Error ? describeError(caught) : { key: "localReadFailed" },
               },
             ];
             if (changes.some((item) => item.id === entry.id)) staleIds.add(entry.id);
@@ -257,7 +350,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
         }
         pendingSummaries = 0;
         staleIds = new Set(changes.map((change) => change.id));
-        errorMessage = caught instanceof Error ? caught.message : "The board could not be loaded.";
+        errorMessage = caught instanceof Error ? describeError(caught) : { key: "boardLoadFailed" };
       } finally {
         if (
           epoch === startingEpoch &&
@@ -294,7 +387,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
       !unavailableIds.has(change.id) &&
       changes.some((item) => item.id === change.id) &&
       (!detail || selectedChange?.id === change.id);
-    await composePrompt(changeWorkflowPrompt(workflow, change), current);
+    await composePrompt(changeWorkflowPrompt(workflow, change, text), current);
   }
 
   async function preparePrompt(
@@ -324,28 +417,25 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
     }
     const expectedSession = sessionId;
     await composePrompt(
-      actionPrompt(change, intent),
+      actionPrompt(change, intent, text),
       () => scope === captured && epoch === originatingEpoch && sessionId === expectedSession,
     );
   }
 
-  async function composePrompt(text: string, current: () => boolean) {
+  async function composePrompt(prompt: string, current: () => boolean) {
     if (!current()) return;
     try {
-      await host.compose({ text, mode: "replace" });
+      await host.compose({ text: prompt, mode: "replace" });
       if (!current()) return;
       await host.toast({
         kind: "success",
-        message: "Workflow prompt prepared in the open composer.",
+        message: text.promptPrepared,
       });
     } catch (caught) {
       if (!current()) return;
       await host.toast({
         kind: "error",
-        message:
-          caught instanceof HostRequestError
-            ? caught.message
-            : "The workflow prompt could not be prepared.",
+        message: caught instanceof HostRequestError ? caught.message : text.promptFailed,
       });
     }
   }
@@ -362,6 +452,8 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
       !unavailableIds.has(change.id) &&
       changes.some((item) => item.id === change.id && item.stage === change.stage);
     worktreePending.add(key);
+    const prompt = actionPrompt(change, "primary", text);
+    const title = text.applyTitle(change.id);
     render();
     let dispatched = false;
     let knownSession: string | null = null;
@@ -372,30 +464,38 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
       if (!current()) return;
       const listed = listing.changes.find((item) => item.id === change.id);
       if (!listed || (listed.totalTasks > 0 && listed.completedTasks === listed.totalTasks))
-        throw new Error("This change is no longer applicable. Refresh before starting Apply.");
+        throw ownedError(new Error(english.applyUnavailable), "applyUnavailable");
       dispatched = true;
       const result = await host.startSession({
         providerId: "openspec-board",
         id: change.id,
-        title: `Apply ${change.id}`,
+        title,
         url: "https://openspec.dev/docs/quickstart",
         projectId: project.id,
         worktree: { kind: "new", name: change.id },
         navigation: "preserve",
-        text: actionPrompt(change, "primary"),
+        text: prompt,
       });
       knownSession = result.sessionId;
       if (!current()) return;
       const resource = result.worktree
-        ? ` Worktree ${result.worktree.name} at ${result.worktree.directory} is retained.`
+        ? text.retainedWorktree(result.worktree.name, result.worktree.directory)
         : "";
       if (!result.sessionId || result.sent !== "sent") {
         await host.toast({
           kind: "error",
           persistent: true,
           message: result.sessionId
-            ? `Session ${result.sessionId} exists, but Apply submission was not confirmed (${result.sent}).${resource} Inspect it before another attempt.`
-            : `Apply creation failed (${"failure" in result ? result.failure : "unknown"}).${resource} Inspect worktrees and sessions before another attempt.`,
+            ? text.applyNotSent(
+                result.sessionId,
+                text.sentReasons[result.sent] ?? result.sent,
+                resource,
+              )
+            : text.applyCreationFailed(
+                text.sentReasons["failure" in result ? result.failure : "unknown"] ??
+                  ("failure" in result ? result.failure : "unknown"),
+                resource,
+              ),
         });
         return;
       }
@@ -408,13 +508,13 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
         await host.toast({
           kind: "error",
           persistent: true,
-          message: `Session ${result.sessionId} was returned with an unexpected worktree result.${resource} Inspect it before another attempt.`,
+          message: text.applyUnexpected(result.sessionId, resource),
         });
         return;
       }
       await host.toast({
         kind: result.linked === false ? "info" : "success",
-        message: `Apply submitted in session ${result.sessionId}.${result.linked === false ? " Its workflow reference could not be saved." : ""}`,
+        message: text.applySubmitted(result.sessionId, result.linked !== false),
       });
       if (current()) await host.openSession(result.sessionId);
     } catch (caught) {
@@ -423,12 +523,14 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
         kind: "error",
         persistent: dispatched,
         message: knownSession
-          ? `Apply session ${knownSession} exists, but it could not be opened. Inspect that session; submission will not be repeated.`
+          ? text.applyOpenFailed(knownSession)
           : dispatched
-            ? `Apply launch outcome is uncertain. A worktree, session or sent prompt may already exist. Inspect worktrees and sessions before another attempt; this launch will not be retried automatically. ${caught instanceof Error ? caught.message : ""}`
+            ? text.applyUncertain(
+                caught instanceof Error ? presentMessage(text, describeError(caught)) : "",
+              )
             : caught instanceof Error
-              ? caught.message
-              : "Worktree inspection failed. No creation was requested.",
+              ? presentMessage(text, describeError(caught))
+              : text.worktreeInspectionFailed,
       });
     } finally {
       worktreePending.delete(key);
@@ -627,7 +729,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
     } catch (caught) {
       await host.toast({
         kind: "error",
-        message: caught instanceof HostRequestError ? caught.message : "Cannot open quickstart",
+        message: caught instanceof HostRequestError ? caught.message : text.quickstartFailed,
       });
     }
   }
@@ -652,29 +754,28 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
       const result = await host.startSession({
         providerId: "openspec-board",
         id: "archive-all",
-        title: "Archive completed OpenSpec changes",
+        title: text.archiveTitle,
         url: "https://openspec.dev/docs/quickstart",
         navigation: "preserve",
-        text: archiveAllPrompt,
+        text: text.prompts.archiveAll,
       });
       if (!current()) return;
       if (result.sessionId && result.sent === "sent") {
         await host.toast({
           kind: result.linked !== false ? "success" : "info",
-          message:
-            result.linked !== false
-              ? `Archive prompt submitted in session ${result.sessionId}. Use refresh to see updates.`
-              : `Archive prompt submitted in session ${result.sessionId}, but its workflow reference could not be saved.`,
+          message: text.archiveSubmitted(result.sessionId, result.linked !== false),
         });
       } else {
         const reason =
-          result.sent === "no-model" ? "No model was available." : `Submission ${result.sent}.`;
+          result.sent === "no-model"
+            ? text.noModel
+            : text.submissionReason(text.sentReasons[result.sent] ?? result.sent);
         await host.toast({
           kind: "error",
           persistent: true,
           message: result.sessionId
-            ? `Session ${result.sessionId} exists, but the archive prompt was not submitted successfully. ${reason} Inspect this session before starting again.${result.linked === false ? " Its workflow reference was not saved." : ""}`
-            : "The archive session could not be created. Inspect sessions before starting again.",
+            ? text.archiveNotSent(result.sessionId, reason, result.linked !== false)
+            : text.archiveCreationFailed,
         });
       }
     } catch (caught) {
@@ -687,9 +788,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
       await host.toast({
         kind: "error",
         persistent: !knownRefusal,
-        message: knownRefusal
-          ? `Archive launch failed: ${caught.message}`
-          : "Archive launch outcome is uncertain. A session or submitted prompt may already exist. Inspect sessions before starting again; this launch will not be retried automatically.",
+        message: knownRefusal ? text.archiveRefused(caught.message) : text.archiveUncertain,
       });
     } finally {
       archivePending = false;
@@ -716,6 +815,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
     },
   });
   const detailRoot = document.createElement("div");
+  detailRoot.className = "language-content";
   appRoot.append(detailRoot);
   const deleteView = mountDeleteDialog(appRoot, client, {
     current: () =>
@@ -738,9 +838,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
       resources.invalidateChange(attempt.scope, attempt.name);
       render();
       loadBoard(true, true);
-      queueMicrotask(() =>
-        appRoot.querySelector<HTMLInputElement>('input[aria-label="Search changes"]')?.focus(),
-      );
+      queueMicrotask(() => appRoot.querySelector<HTMLInputElement>(".board-search input")?.focus());
     },
   });
   const detailView = mountDetailView(detailRoot, {
@@ -753,12 +851,11 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
         } catch (caught) {
           await host.toast({
             kind: "error",
-            message:
-              caught instanceof HostRequestError ? caught.message : "Could not copy change name",
+            message: caught instanceof HostRequestError ? caught.message : text.copyFailed,
           });
           return;
         }
-        await host.toast({ kind: "success", message: "Change name copied" });
+        await host.toast({ kind: "success", message: text.nameCopied });
       })().catch(() => {});
     },
     openUrl: (url) => {
@@ -767,8 +864,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
         .catch(async (caught: unknown) => {
           await host.toast({
             kind: "error",
-            message:
-              caught instanceof HostRequestError ? caught.message : "Cannot open document link",
+            message: caught instanceof HostRequestError ? caught.message : text.linkFailed,
           });
         })
         .catch(() => {});
@@ -789,9 +885,7 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
         const opener = [...appRoot.querySelectorAll<HTMLButtonElement>(".card-main")].find(
           (button) => button.textContent === name,
         );
-        (
-          opener ?? appRoot.querySelector<HTMLInputElement>('input[aria-label="Search changes"]')
-        )?.focus();
+        (opener ?? appRoot.querySelector<HTMLInputElement>(".board-search input"))?.focus();
       });
     },
     selectArtifact,
@@ -811,19 +905,23 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
   });
 
   function render() {
+    const previousText = text;
+    const scroll = { left: window.scrollX, top: window.scrollY };
+    renderLanguage();
     const originatingSession = sessionId;
     const detailChange = selectedChange;
-    createView.update();
-    deleteView.update();
-    archiveView.update();
+    createView.update(text);
+    deleteView.update(text);
+    archiveView.update(text);
     const captured = scope;
     const originatingEpoch = epoch;
     const originatingDirectory = directory;
     boardView.update({
+      text,
       directory,
       workflow: (workflow) =>
         void composePrompt(
-          globalWorkflowPrompt(workflow),
+          globalWorkflowPrompt(workflow, text),
           () =>
             !!originatingDirectory &&
             !disposed &&
@@ -868,9 +966,11 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
       })),
     });
     boardView.setVisible(!selectedChange);
+    const detailIssue = failures.find((item) => item.id === selectedChange?.id)?.error;
     detailView.update(
       selectedChange
         ? {
+            text,
             change: selectedChange,
             selectedArtifact,
             activeView,
@@ -880,8 +980,8 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
             pending: !!captured && worktreePending.has(worktreeKey(captured, selectedChange.id)),
             loading,
             refreshError:
-              errorMessage ??
-              failures.find((item) => item.id === selectedChange?.id)?.error ??
+              (errorMessage ? presentMessage(text, errorMessage) : null) ??
+              (detailIssue ? presentMessage(text, detailIssue) : null) ??
               null,
             primaryAction: (intent) => {
               if (detailChange)
@@ -907,9 +1007,13 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
           }
         : null,
     );
+    // Localized wrapping must not let browser scroll anchoring move the retained board.
+    if (text !== previousText) window.scrollTo(scroll);
   }
 
+  appRoot.append(languageRow);
   const offReady = host.onReady((ready) => {
+    hostLocale = ready.locale;
     const changed = directory !== ready.directory;
     directory = ready.directory;
     sessionId = ready.session?.id ?? null;
@@ -928,6 +1032,25 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
     sessionId = nextSession?.id ?? null;
     render();
   });
+  render();
+  void host.storage
+    .get("ui.language")
+    .then(
+      (value) => {
+        if (disposed) return;
+        if (value !== undefined && !isLanguagePreference(value))
+          preferenceWarning = "invalidPreference";
+        else languagePreference = value ?? "auto";
+      },
+      () => {
+        if (!disposed) preferenceWarning = "readPreferenceFailed";
+      },
+    )
+    .finally(() => {
+      if (disposed) return;
+      preferenceReading = false;
+      render();
+    });
   return () => {
     disposed = true;
     epoch++;
@@ -937,6 +1060,11 @@ export function mountController(host: HostClient, appRoot: HTMLElement): () => v
     offDirectory();
     offSession();
     resources.dispose();
+    languageTrigger.removeEventListener("click", guardLanguage, true);
+    languageTrigger.removeEventListener("keydown", guardLanguage, true);
+    languageSelect.dispose();
+    languageRow.remove();
+    appRoot.classList.remove("language-layout");
     boardView.dispose();
     detailView.dispose();
     deleteView.dispose();

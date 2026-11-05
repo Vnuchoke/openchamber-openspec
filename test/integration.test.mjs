@@ -304,7 +304,7 @@ for (const shared of [false, true])
         await panelFrame
           .locator(".change-card")
           .filter({ hasText: "created-in-fixture" })
-          .getByRole("button", { name: "Continue artifacts", exact: true })
+          .getByRole("button", { name: "Plan", exact: true })
           .click();
         await page.waitForFunction(() => window.__compose?.text?.includes("created-in-fixture"));
         assert.equal(await page.evaluate(() => window.__compose.mode), "replace");

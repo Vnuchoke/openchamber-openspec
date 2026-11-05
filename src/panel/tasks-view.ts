@@ -2,6 +2,7 @@ import { mountButton, mountProgress } from "@openchamber/sdk/ui";
 import type { Task } from "../contracts.js";
 import type { ReadState } from "./resources.js";
 import { mountTooltip } from "./help-button.js";
+import { english, errorMessage, type UiText } from "./localization.js";
 
 export function mountTasksView(root: HTMLElement, retryRead: () => void) {
   root.className = "tasks-view";
@@ -32,23 +33,29 @@ export function mountTasksView(root: HTMLElement, retryRead: () => void) {
     list.replaceChildren();
   }
   return {
-    update(state: ReadState<Task[]> | null, retryable = true, emptyMessage = "") {
-      tooltip.update();
+    update(
+      state: ReadState<Task[]> | null,
+      retryable = true,
+      emptyMessage = "",
+      text: UiText = english,
+    ) {
+      tooltip.update(text.retryTasksDescription);
+      retry.update({ label: text.retryTasks });
       const tasks = state?.value ?? [];
       const completed = tasks.filter((task) => task.done).length;
       summary.textContent =
         tasks.length || state?.error || !retryable
           ? ""
           : state?.pending
-            ? "Loading tasks…"
-            : emptyMessage || "No tasks tracked yet.";
+            ? text.loadingTasks
+            : emptyMessage || text.noTrackedTasks;
       summary.hidden = !summary.textContent;
       progressRoot.hidden = !tasks.length;
       progress.update({
         value: tasks.length ? Math.round((completed / tasks.length) * 100) : 0,
-        label: tasks.length ? `${completed} of ${tasks.length} tasks complete` : "Task completion",
+        label: tasks.length ? text.tasks(completed, tasks.length) : text.taskCompletion,
       });
-      issue.textContent = retryable ? (state?.error?.message ?? "") : "";
+      issue.textContent = retryable && state?.error ? errorMessage(state.error, text) : "";
       issue.hidden = !issue.textContent;
       retryRoot.hidden = !state?.error || !retryable;
       const ids = new Set(tasks.map((task) => task.id));
@@ -73,7 +80,7 @@ export function mountTasksView(root: HTMLElement, retryRead: () => void) {
         }
         item.row.classList.toggle("done", task.done);
         item.mark.textContent = task.done ? "✓" : "○";
-        item.mark.setAttribute("aria-label", task.done ? "Complete" : "Pending");
+        item.mark.setAttribute("aria-label", task.done ? text.taskComplete : text.taskPending);
         item.label.textContent = task.description;
         if (list.children[index] !== item.row)
           list.insertBefore(item.row, list.children[index] ?? null);

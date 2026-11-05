@@ -5,6 +5,57 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OpenSpec</title>
     <style>
+      .language-layout {
+        display: flex;
+        flex-direction: column;
+        height: 100dvh;
+      }
+      .language-layout:has(> .board-shell:not([hidden])) {
+        height: auto;
+        min-height: 100dvh;
+      }
+      .language-row {
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: auto;
+        padding: 8px 16px;
+        background: var(--oc-bg);
+        flex: none;
+      }
+      .language-layout > .board-shell {
+        flex: none;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .language-content {
+        flex: 1;
+        min-height: 0;
+      }
+      .language-content > .detail {
+        height: 100%;
+      }
+      .language-row > span:first-child {
+        max-width: 100%;
+      }
+      .language-row .oc-sdk-select {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .language-row .oc-sdk-field-label {
+        margin: 0;
+        white-space: nowrap;
+      }
+      .language-warning {
+        color: var(--oc-warning-text);
+        font-size: 0.8rem;
+      }
       .button-tooltip {
         position: fixed;
         pointer-events: none;
@@ -149,11 +200,20 @@
       }
       .board-search {
         display: block;
-        flex: 1;
-        min-width: 0;
+        flex: 1 1 12rem;
+        min-width: min(12rem, 100%);
       }
       .board-search .oc-sdk-search {
         width: 100%;
+      }
+      .workflow-menu > .oc-sdk-menu > .oc-sdk-btn::after {
+        content: "";
+        width: 6px;
+        height: 6px;
+        flex: none;
+        border: solid currentColor;
+        border-width: 0 1.5px 1.5px 0;
+        transform: translateY(-2px) rotate(45deg);
       }
       body .oc-sdk-btn[data-size="sm"] {
         height: 28px;

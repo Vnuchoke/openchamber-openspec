@@ -1,5 +1,6 @@
 import type { Task } from "../contracts.js";
 import type { Client, Scope } from "./client.js";
+import { ownedError } from "./localization.js";
 
 export type ReadState<T> = { value: T | null; pending: boolean; error: Error | null };
 export type Read<T> = { state: ReadState<T>; completion: Promise<ReadState<T>> | null };
@@ -42,7 +43,11 @@ export function createResources(
   function read<T>(scope: Scope, key: string, load: () => Promise<T>, retry = false): Read<T> {
     if (!active(scope))
       return {
-        state: { value: null, pending: false, error: new Error("OpenSpec context changed.") },
+        state: {
+          value: null,
+          pending: false,
+          error: ownedError(new Error("OpenSpec context changed."), "contextChanged"),
+        },
         completion: null,
       };
     let entry = cache.get(key) as Entry<T> | undefined;
@@ -63,8 +68,9 @@ export function createResources(
           if (started !== generation || !active(scope) || cache.get(key) !== current) return;
           const size = new TextEncoder().encode(JSON.stringify(value)).length;
           if (bytes + size > maxBytes) {
-            current.error = new Error(
-              "Session read limit reached. Refresh to clear retained reads.",
+            current.error = ownedError(
+              new Error("Session read limit reached. Refresh to clear retained reads."),
+              "readLimit",
             );
           } else {
             current.value = value;
@@ -74,7 +80,10 @@ export function createResources(
         },
         (caught: unknown) => {
           if (started === generation && active(scope) && cache.get(key) === current)
-            current.error = caught instanceof Error ? caught : new Error("OpenSpec read failed.");
+            current.error =
+              caught instanceof Error
+                ? caught
+                : ownedError(new Error("OpenSpec read failed."), "localReadFailed");
         },
       )
       .then(() => {

@@ -55,6 +55,14 @@ function hostHtml() {
     let sessions = [];
     window.__projects = value => { projects = value; };
     window.__worktrees = value => { worktrees = value; };
+    let workspaceState = "ready";
+    let workspaceEventState = null;
+    let sessionCoverage = [];
+    window.__workspaceState = (state, event = null) => { workspaceState = state; workspaceEventState = event; };
+    window.__sessionCoverage = value => { sessionCoverage = value; };
+    window.__sessions = value => { sessions = value; };
+    let failOpenSession = false;
+    window.__failOpenSession = () => { failOpenSession = true; };
     const guests = new Set();
     const changes = [
       { id: "first-change", goal: "Read the proposal", completedTasks: 1, totalTasks: 2 },
@@ -144,9 +152,22 @@ function hostHtml() {
     window.__remove = (id) => { const index = changes.findIndex((item) => item.id === id); changes.splice(index, 1); };
     window.__recreate = (id) => { changes.push({ id, goal: "Recreated goal", completedTasks: 0, totalTasks: 0 }); };
     window.__addSameStage = () => { changes.push({ id: "alpha-change", goal: "Another goal", completedTasks: 1, totalTasks: 2 }); };
-    window.__theme = (mode) => { for (const guest of guests) guest.postMessage({ channel: "openchamber.sdk", v: 1,
-      type: "ready", payload: { ...ready, theme: ${themes}[mode] } }, "*"); };
-    window.__failSummary = () => { failSummary = true; };
+     window.__theme = (mode) => { ready.theme = ${themes}[mode]; broadcastReady(); };
+     window.__locale = (locale) => { ready.locale = locale; broadcastReady(); };
+     function broadcastReady() { for (const guest of guests) guest.postMessage({ channel: "openchamber.sdk", v: 1, type: "ready", payload: ready }, "*"); }
+     let language = new URLSearchParams(location.search).has("language") ? JSON.parse(new URLSearchParams(location.search).get("language")) : undefined;
+     let holdStorage = new URLSearchParams(location.search).get("hold-storage");
+     let failStorage = new URLSearchParams(location.search).get("fail-storage");
+     const pendingStorage = [];
+     window.__storageCalls = [];
+     window.__holdStorage = (op) => { holdStorage = op; };
+     window.__failStorage = (op) => { failStorage = op; };
+     window.__releaseStorage = () => { holdStorage = null; pendingStorage.splice(0).forEach(finish => finish()); };
+     window.__remount = () => { guests.clear(); document.querySelector("iframe").src = "/panel/index.html?mount=" + Math.random(); };
+     window.__counts = (count) => { changes[0].completedTasks = 0; changes[0].totalTasks = count; };
+     window.__artifactCount = count => { workflowArtifacts = Array.from({length: count}, (_, n) => ({id: "artifact-" + n, status: "done", outputPath: "artifact-" + n + ".md", requires: []})); };
+     window.__changeCount = count => { changes.splice(0, changes.length, ...Array.from({length: count}, (_, n) => ({id: "change-" + n, goal: null, completedTasks: 0, totalTasks: 0}))); };
+     window.__failSummary = (code = true) => { failSummary = code; };
     window.__failDocument = () => { failDocument = true; };
     window.__failTasks = () => { failTasks = true; };
     window.__clearTasks = () => { tasks = []; changes[0].completedTasks = 0; changes[0].totalTasks = 0; };
@@ -201,6 +222,17 @@ function hostHtml() {
        const reply = (payload) => { if (message.type === "service-request") __completed.push(message.payload.path);
          event.source.postMessage({ channel: "openchamber.sdk", v: 1,
            type: "result", id: message.id, ok: true, payload }, "*"); };
+       if (message.type === "storage") {
+         const { op, key, value } = message.payload;
+         __storageCalls.push(message.payload);
+         const finish = () => {
+           if (failStorage === op) { failStorage = null; event.source.postMessage({ channel: "openchamber.sdk", v: 1, type: "result", id: message.id, ok: false, code: "HOST_REJECTED", error: "Storage unavailable" }, "*"); return; }
+           if (op === "set") language = value;
+           reply(op === "get" ? { storage: true, op, found: language !== undefined, ...(language !== undefined ? {value: language} : {}) } : { storage: true, op });
+         };
+         if (holdStorage === op) pendingStorage.push(finish); else finish();
+         return;
+       }
       if (message.type === "hello") {
         guests.add(event.source);
         const show = () => event.source.postMessage({ channel: "openchamber.sdk", v: 1, type: "ready", payload: ready }, "*");
@@ -319,13 +351,24 @@ function hostHtml() {
       if (message.type === "workspace-read") {
         window.__requests.push({path:message.type,body:message.payload});
         const query = message.payload;
-        reply(query.kind === "projects" ? {kind:"projects",state:"ready",projects} :
+        reply(query.kind === "projects" ? {kind:"projects",state:workspaceState,projects} :
           query.kind === "worktrees" ? {kind:"worktrees",projectId:query.projectId,state:"ready",worktrees} :
-          {kind:"sessions",projectId:query.projectId,state:"ready",coverage:[],sessions});
+          {kind:"sessions",projectId:query.projectId,state:"ready",coverage:sessionCoverage,sessions});
         return;
       }
+      if (message.type === "workspace-subscribe") {
+        window.__requests.push({path:message.type,body:message.payload});
+        reply();
+        window.__releaseWorkspace = () => event.source.postMessage({ channel:"openchamber.sdk", v:1, type:"workspace", payload:{subscriptionId:message.payload.subscriptionId,snapshot:{kind:"projects",state:"ready",projects}} }, "*");
+        if (workspaceEventState) event.source.postMessage({ channel:"openchamber.sdk", v:1, type:"workspace", payload:{subscriptionId:message.payload.subscriptionId,snapshot:{kind:"projects",state:workspaceEventState,projects}} }, "*");
+        return;
+      }
+      if (message.type === "workspace-unsubscribe") { window.__requests.push({path:message.type,body:message.payload}); return; }
       if (message.type === "open-session") {
-        window.__requests.push({path:message.type,body:message.payload}); reply(); return;
+        window.__requests.push({path:message.type,body:message.payload});
+        if (failOpenSession) { failOpenSession = false; event.source.postMessage({channel:"openchamber.sdk",v:1,type:"result",id:message.id,ok:false,code:"HOST_REJECTED",error:"Cannot open session"},"*"); }
+        else reply();
+        return;
       }
       if (message.type === "open-url") {
         window.__requests.push({ path: "open-url", body: message.payload });
@@ -358,10 +401,10 @@ function hostHtml() {
            send = (value, status) => reply(value.error ? value : { affectedAreas: changes.find((change) => change.id === body.change)?.affectedAreas ?? [], ...value }, status);
           const item = changes.find((change) => change.id === body.change);
           if (!item) send({ error: { code: "CHANGE_UNAVAILABLE", message: "Removed" } }, 404);
-          else if (failSummary && item.id === "first-change") { failSummary = false;
-            send({ error: { code: "UNAVAILABLE", message: "Read failed" } }, 503); }
+           else if (failSummary && item.id === "first-change") { const code = typeof failSummary === "string" ? failSummary : "UNAVAILABLE"; failSummary = false;
+             send({ error: { code, message: "Read failed" } }, 503); }
             else if (workflowArtifacts) send({ id: item.id, goal: item.goal, root: currentRoot,
-              artifacts: workflowArtifacts, applyRequires: ["tasks"], documents: [] });
+               artifacts: workflowArtifacts, applyRequires: workflowArtifacts.some(item => item.id === "tasks") ? ["tasks"] : workflowArtifacts.map(item => item.id), documents: [] });
             else if (readinessCase) send({ id: item.id, goal: item.goal, root: currentRoot,
              artifacts: [
                 { id: "proposal", status: readinessCase === "unknown" ? "done" : "ready", outputPath: "proposal.md", requires: [] },
@@ -447,6 +490,2106 @@ async function withPanel(run) {
     if (failures.length) throw new AggregateError(failures.map((result) => result.reason));
   }
 }
+
+test("language footer stays at window bottom with an inline label on board and detail", async () => {
+  await withPanel(async (browser, url) => {
+    for (const width of [320, 1076]) {
+      for (const locale of ["en", "ru"]) {
+        const page = await browser.newPage({ viewport: { width, height: 700 } });
+        await page.goto(url);
+        const panel = page.frameLocator("iframe");
+        await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+        await page.evaluate((locale) => __locale(locale), locale);
+        await panel.locator(`html[lang="${locale}"]`).waitFor();
+        const footer = panel.locator(".language-row");
+        for (const view of ["short board", "detail", "long board"]) {
+          if (view === "detail") {
+            await panel.getByRole("button", { name: "first-change", exact: true }).click();
+            await panel.locator(".detail-footer").waitFor();
+          } else if (view === "long board") {
+            await panel.locator(".detail-back button").click();
+            await page.evaluate(() => __changeCount(60));
+            await panel.locator(".toolbar .refresh-control button").click();
+            await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+            await panel.locator(".board-shell").evaluate(() => window.scrollTo(0, 200));
+          }
+          const geometry = await footer.evaluate((node) => {
+            const box = node.getBoundingClientRect();
+            const label = node.querySelector(".oc-sdk-field-label").getBoundingClientRect();
+            const control = node.querySelector("button").getBoundingClientRect();
+            return {
+              bottom: Math.abs(box.bottom - innerHeight) < 1,
+              inline:
+                Math.abs((label.top + label.bottom - control.top - control.bottom) / 2) < 1 &&
+                label.right <= control.left,
+              last: node === document.querySelector("#root").lastElementChild,
+              contained:
+                box.left >= 0 &&
+                box.right <= innerWidth &&
+                document.documentElement.scrollWidth <= innerWidth,
+            };
+          });
+          assert.deepEqual(
+            geometry,
+            { bottom: true, inline: true, last: true, contained: true },
+            `${view} ${locale} ${width}px`,
+          );
+          if (view === "detail") {
+            assert.equal(
+              await panel
+                .locator(".detail")
+                .evaluate(
+                  (node) =>
+                    node.getBoundingClientRect().bottom <=
+                    document.querySelector(".language-row").getBoundingClientRect().top + 1,
+                ),
+              true,
+            );
+          } else if (view === "long board") {
+            await panel
+              .locator(".board-shell")
+              .evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
+            assert.equal(
+              await panel
+                .locator(".change-card")
+                .last()
+                .evaluate(
+                  (node) =>
+                    node.getBoundingClientRect().bottom <=
+                    document.querySelector(".language-row").getBoundingClientRect().top + 1,
+                ),
+              true,
+            );
+          }
+          const before = await page.evaluate(() => __requests.length);
+          await footer.locator("button").click();
+          const popup = panel.getByRole("listbox");
+          await popup.waitFor();
+          assert.equal(
+            await popup.evaluate((node) => {
+              const box = node.getBoundingClientRect();
+              return box.top >= 0 && box.bottom <= innerHeight;
+            }),
+            true,
+          );
+          await popup.press("Escape");
+          assert.equal(await page.evaluate(() => __requests.length), before);
+        }
+        await page.close();
+      }
+    }
+  });
+});
+
+test("viewer language retained detail translates empty document fallbacks without rerender", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    await page.evaluate(() =>
+      __document(
+        "proposal.md",
+        "# Original heading\n\n- [ ] []()\n- [ ] ![](https://example.test/task.png)\n\n![](https://example.test/image.png)",
+      ),
+    );
+    await panel.getByRole("button", { name: "first-change", exact: true }).click();
+    const content = panel.locator(".document-content").first();
+    await content.getByRole("heading", { name: "Original heading" }).waitFor();
+    await content.evaluate((node) => {
+      window.retainedDocumentHeading = node.querySelector("h1");
+    });
+    assert.equal(
+      await content.getByRole("checkbox", { name: "Document task", exact: true }).count(),
+      1,
+    );
+    const requests = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru"));
+    await panel.locator('html[lang="ru"]').waitFor();
+    assert.equal(
+      await content.getByRole("checkbox", { name: "Задача документа", exact: true }).count(),
+      1,
+    );
+    assert.equal(
+      await content.getByRole("checkbox", { name: "Изображение", exact: true }).count(),
+      1,
+    );
+    assert.deepEqual(await content.locator(".document-image-placeholder").allTextContents(), [
+      "Изображение",
+      "Изображение",
+    ]);
+    assert.equal(
+      await content.evaluate((node) => node.querySelector("h1") === window.retainedDocumentHeading),
+      true,
+    );
+    assert.equal(await content.getByRole("heading").textContent(), "Original heading");
+    assert.equal(await page.evaluate(() => __requests.length), requests);
+  });
+});
+
+test("viewer language dialogs retain create draft focus validation and uncertain attempt", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.getByRole("button", { name: "Create scaffold…", exact: true }).click();
+    const dialog = panel.getByRole("dialog");
+    const name = dialog.locator("input");
+    await name.fill("Invalid");
+    await dialog.getByRole("textbox", { name: "Goal", exact: true }).fill("Original goal");
+    await dialog.getByRole("button", { name: "Create", exact: true }).click();
+    await name.focus();
+    const before = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru"));
+    await dialog.getByRole("heading", { name: "Новое изменение" }).waitFor();
+    assert.equal(await name.inputValue(), "Invalid");
+    assert.equal(
+      await dialog.getByRole("textbox", { name: "Цель", exact: true }).inputValue(),
+      "Original goal",
+    );
+    assert.equal(await name.evaluate((el) => el === document.activeElement), true);
+    assert.match(await dialog.innerText(), /Используйте строчные/);
+    assert.equal(await page.evaluate(() => __requests.length), before);
+    await name.fill("uncertain-change");
+    await page.evaluate(() => {
+      __unknownCreate();
+      __failNextListing();
+    });
+    await dialog.getByRole("button", { name: "Создать", exact: true }).click();
+    await dialog.getByRole("button", { name: "Повторить чтение", exact: true }).waitFor();
+    assert.match(await dialog.innerText(), /Результат создания неизвестен\. Cannot check listing/);
+    const uncertain = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("en"));
+    await dialog.getByRole("button", { name: "Retry read", exact: true }).waitFor();
+    assert.match(await dialog.innerText(), /Creation outcome is unknown\. Cannot check listing/);
+    assert.equal(await page.evaluate(() => __requests.length), uncertain);
+    await dialog.getByRole("button", { name: "Retry read", exact: true }).click();
+    await dialog.getByRole("button", { name: "Inspect change", exact: true }).waitFor();
+    const observed = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru"));
+    await dialog.getByRole("button", { name: "Просмотреть изменение", exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => __requests.length), observed);
+    assert.equal(
+      await page.evaluate(() => __requests.filter((r) => r.path === "/create").length),
+      1,
+    );
+  });
+});
+
+test("viewer language dialogs retain delete unresolved mode and archive confirmation", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.getByRole("button", { name: "first-change", exact: true }).click();
+    await panel.getByRole("button", { name: "Delete change", exact: true }).click();
+    const dialog = panel.getByRole("dialog");
+    const before = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru"));
+    await dialog.getByRole("heading", { name: "Удалить first-change?" }).waitFor();
+    assert.match(await dialog.innerText(), /не отменяет реализацию/);
+    assert.equal(await page.evaluate(() => __requests.length), before);
+    await page.evaluate(() => {
+      __keepOnUnknownDelete();
+      __failNextListing();
+    });
+    await dialog.getByRole("button", { name: "Удалить", exact: true }).click();
+    await dialog.getByRole("button", { name: "Повторить чтение", exact: true }).waitFor();
+    const unresolved = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("en"));
+    await dialog.getByRole("button", { name: "Retry read", exact: true }).waitFor();
+    assert.equal(
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).isDisabled(),
+      true,
+    );
+    assert.equal(await page.evaluate(() => __requests.length), unresolved);
+    await dialog.getByRole("button", { name: "Retry read", exact: true }).click();
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await panel.getByRole("button", { name: "Back to changes", exact: true }).click();
+    await page.evaluate(() => __edit("done"));
+    await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+    await panel.getByRole("button", { name: "Archive all", exact: true }).click();
+    const confirmation = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru"));
+    await dialog
+      .getByRole("heading", { name: "Архивировать все завершённые изменения?" })
+      .waitFor();
+    assert.match(await dialog.innerText(), /Незавершённые изменения будут пропущены/);
+    assert.equal(
+      await dialog
+        .getByRole("button", { name: "Отмена", exact: true })
+        .evaluate((el) => el === document.activeElement),
+      true,
+    );
+    assert.equal(await page.evaluate(() => __requests.length), confirmation);
+    await dialog.getByRole("button", { name: "Отмена", exact: true }).click();
+    assert.equal(
+      await page.evaluate(() => __requests.filter((r) => r.path === "start-session").length),
+      0,
+    );
+  });
+});
+
+test("viewer language dialogs retain goal validation pending writes reconciliation and original context", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.getByRole("button", { name: "Create scaffold…", exact: true }).click();
+    const dialog = panel.getByRole("dialog");
+    await dialog.locator("input").fill("pending-change");
+    await dialog.getByRole("button", { name: "Create", exact: true }).click();
+    assert.match(await dialog.innerText(), /Goal is required/);
+    await dialog.locator("textarea").focus();
+    await page.evaluate(() => __locale("ru"));
+    await dialog.getByText("Укажите цель.", { exact: true }).waitFor();
+    assert.equal(
+      await dialog.locator("textarea").evaluate((el) => el === document.activeElement),
+      true,
+    );
+    await dialog.locator("textarea").fill("Keep this goal");
+    assert.equal(await dialog.getByText("Укажите цель.", { exact: true }).count(), 0);
+    await page.evaluate(() => {
+      __unknownCreate();
+      __holdCreate();
+      __holdListing();
+    });
+    await dialog.getByRole("button", { name: "Создать", exact: true }).click();
+    await page.waitForFunction(() => __requests.some((r) => r.path === "/create"));
+    await dialog.getByRole("button", { name: "Отмена", exact: true }).focus();
+    const pending = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("en"));
+    await dialog.getByRole("heading", { name: "New change", exact: true }).waitFor();
+    assert.equal(await dialog.locator("input").isDisabled(), true);
+    assert.equal(await dialog.locator("input").inputValue(), "pending-change");
+    assert.equal(await dialog.locator("textarea").inputValue(), "Keep this goal");
+    assert.equal(
+      await dialog
+        .getByRole("button", { name: "Cancel", exact: true })
+        .evaluate((el) => el === document.activeElement),
+      true,
+    );
+    assert.equal(await page.evaluate(() => __requests.length), pending);
+    await page.evaluate(() => __releaseCreate());
+    await dialog
+      .getByText("Checking the original project for a matching change…", { exact: true })
+      .waitFor();
+    const checking = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru"));
+    await dialog
+      .getByText("Проверка исходного проекта на наличие изменения с таким именем…", { exact: true })
+      .waitFor();
+    assert.equal(await page.evaluate(() => __requests.length), checking);
+    await page.evaluate(() => __directory("/different-project"));
+    await dialog.getByText(/Вернитесь в \/tmp\/fixture-project \(корень OpenSpec/).waitFor();
+    await page.evaluate(() => __locale("en"));
+    await dialog.getByText(/Return to \/tmp\/fixture-project \(OpenSpec root/).waitFor();
+    assert.equal(await dialog.locator("textarea").inputValue(), "Keep this goal");
+    await page.evaluate(() => __releaseListing());
+    await dialog.getByRole("button", { name: "Inspect change", exact: true }).waitFor();
+    assert.equal(
+      await dialog.getByRole("button", { name: "Inspect change", exact: true }).isDisabled(),
+      true,
+    );
+    assert.deepEqual(
+      await page.evaluate(() => __requests.filter((r) => r.path === "/create").map((r) => r.body)),
+      [
+        {
+          directory,
+          root,
+          planning: "fixture-planning",
+          expectedRoot: root,
+          expectedPlanning: "fixture-planning",
+          name: "pending-change",
+          goal: "Keep this goal",
+        },
+      ],
+    );
+    await page.goto(url);
+    await panel.getByRole("button", { name: "first-change", exact: true }).click();
+    await panel.getByRole("button", { name: "Delete change", exact: true }).click();
+    await page.evaluate(() => {
+      __holdDelete();
+      __keepOnUnknownDelete();
+      __holdListing();
+    });
+    await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+    await page.waitForFunction(() => __requests.some((r) => r.path === "/delete"));
+    const deleting = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru"));
+    await dialog.getByRole("heading", { name: "Удалить first-change?", exact: true }).waitFor();
+    assert.equal(
+      await dialog.getByRole("button", { name: "Удалить", exact: true }).isDisabled(),
+      true,
+    );
+    assert.equal(
+      await dialog.getByRole("button", { name: "Отмена", exact: true }).isDisabled(),
+      true,
+    );
+    assert.equal(await page.evaluate(() => __requests.length), deleting);
+    await page.evaluate(() => __releaseDelete());
+    await dialog
+      .getByText("Проверка наличия изменения в исходном проекте…", { exact: true })
+      .waitFor();
+    const reconciling = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("en"));
+    await dialog
+      .getByText("Checking the original project for this change…", { exact: true })
+      .waitFor();
+    assert.equal(await page.evaluate(() => __requests.length), reconciling);
+    await page.evaluate(() => __releaseListing());
+    await dialog.getByRole("button", { name: "Close", exact: true }).waitFor();
+    await page.evaluate(() => __locale("ru"));
+    await dialog.getByRole("button", { name: "Закрыть", exact: true }).waitFor();
+    assert.match(await dialog.innerText(), /Удаление не подтверждено/);
+    assert.equal(
+      await page.evaluate(() => __requests.filter((r) => r.path === "/delete").length),
+      1,
+    );
+  });
+});
+
+test("viewer language dialogs translate absent creation and preserve raw rejection without granting retry", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    for (const rejected of [false, true]) {
+      await page.goto(url);
+      const panel = page.frameLocator("iframe");
+      await panel.getByRole("button", { name: "Create scaffold…", exact: true }).click();
+      const dialog = panel.getByRole("dialog");
+      await dialog.locator("input").fill("absent-change");
+      await dialog.locator("textarea").fill("Raw goal");
+      await page.evaluate((rejected) => {
+        __createReply(rejected ? "known-error" : "invalid-json", false);
+      }, rejected);
+      await dialog.getByRole("button", { name: "Create", exact: true }).click();
+      await dialog
+        .getByText(
+          rejected
+            ? "Known rejection"
+            : "Creation outcome is unknown. The original project was refreshed; no matching change was found.",
+          { exact: true },
+        )
+        .waitFor();
+      const before = await page.evaluate(() => __requests.length);
+      await page.evaluate(() => __locale("ru"));
+      await dialog.getByRole("heading", { name: "Новое изменение", exact: true }).waitFor();
+      assert.match(
+        await dialog.innerText(),
+        rejected
+          ? /Known rejection/
+          : /Данные исходного проекта обновлены; изменение с таким именем не найдено/,
+      );
+      assert.equal(await dialog.locator("input").inputValue(), "absent-change");
+      assert.equal(await dialog.locator("textarea").inputValue(), "Raw goal");
+      assert.equal(
+        await dialog.getByRole("button", { name: "Создать", exact: true }).isEnabled(),
+        true,
+      );
+      assert.equal(await page.evaluate(() => __requests.length), before);
+      const submit = dialog.getByRole("button", { name: "Создать", exact: true });
+      await submit.focus();
+      await page.mouse.move(1, 1);
+      assert.equal(await dialog.getByRole("tooltip").count(), 0);
+      await submit.hover();
+      await dialog.getByRole("tooltip").filter({ hasText: "агент не запускается" }).waitFor();
+      await page.mouse.move(1, 1);
+      assert.equal(await dialog.getByRole("tooltip").count(), 0);
+    }
+  });
+});
+
+test("viewer language operation feedback translates new toasts session titles and prompts not raw errors", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    const prompts = [];
+    for (const ru of [false, true]) {
+      await page.goto(url);
+      const panel = page.frameLocator("iframe");
+      await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+      if (ru) await page.evaluate(() => __locale("ru"));
+      const initialReads = await page.evaluate(
+        () => __requests.filter((r) => r.path.startsWith("/")).length,
+      );
+      await panel
+        .getByRole("button", {
+          name: ru ? "Краткое руководство OpenSpec" : "OpenSpec quickstart",
+          exact: true,
+        })
+        .click();
+      await page.waitForFunction(() => __requests.some((r) => r.path === "open-url"));
+      await page.evaluate(() => __failOpenUrl());
+      await panel
+        .getByRole("button", {
+          name: ru ? "Краткое руководство OpenSpec" : "OpenSpec quickstart",
+          exact: true,
+        })
+        .click();
+      await page.waitForFunction(() =>
+        __requests.some((r) => r.path === "toast" && r.body.message === "Cannot open quickstart"),
+      );
+      assert.equal(
+        await page.evaluate(() => __requests.filter((r) => r.path.startsWith("/")).length),
+        initialReads,
+      );
+      await page.evaluate(() => __document("proposal.md", "[Raw link](https://example.com/raw)"));
+      await panel.getByRole("button", { name: "first-change", exact: true }).click();
+      await panel.getByRole("link", { name: "Raw link", exact: true }).click();
+      await page.waitForFunction(
+        () => __requests.filter((r) => r.path === "open-url").length === 3,
+      );
+      await page.evaluate(() => __failOpenUrl());
+      await panel.getByRole("link", { name: "Raw link", exact: true }).click();
+      await page.waitForFunction(
+        () =>
+          __requests.filter(
+            (r) => r.path === "toast" && r.body.message === "Cannot open quickstart",
+          ).length === 2,
+      );
+      await panel
+        .getByRole("button", {
+          name: ru ? "Копировать имя изменения" : "Copy change name",
+          exact: true,
+        })
+        .click();
+      await page.waitForFunction(
+        (message) => __requests.some((r) => r.path === "toast" && r.body.message === message),
+        ru ? "Имя изменения скопировано" : "Change name copied",
+      );
+      await page.evaluate(() => __failClipboard());
+      await panel
+        .getByRole("button", {
+          name: ru ? "Копировать имя изменения" : "Copy change name",
+          exact: true,
+        })
+        .click();
+      await page.waitForFunction(() =>
+        __requests.some((r) => r.path === "toast" && r.body.message === "Clipboard unavailable"),
+      );
+      await panel.getByRole("button", { name: ru ? "Выполнить" : "Apply", exact: true }).click();
+      await panel
+        .getByRole("menuitem", {
+          name: ru ? "Подготовить в текущем чате" : "Prepare in current chat",
+          exact: true,
+        })
+        .click();
+      await page.waitForFunction(
+        (message) => __requests.some((r) => r.path === "toast" && r.body.message === message),
+        ru
+          ? "Запрос сценария подготовлен в открытом редакторе сообщения."
+          : "Workflow prompt prepared in the open composer.",
+      );
+      prompts.push(await page.evaluate(() => __requests.find((r) => r.path === "compose").body));
+      await page.evaluate(() => __failCompose());
+      await panel.getByRole("button", { name: ru ? "Выполнить" : "Apply", exact: true }).click();
+      await panel
+        .getByRole("menuitem", {
+          name: ru ? "Подготовить в текущем чате" : "Prepare in current chat",
+          exact: true,
+        })
+        .click();
+      await page.waitForFunction(() =>
+        __requests.some((r) => r.path === "toast" && r.body.message === "Composer unavailable"),
+      );
+      await page.evaluate(() => __edit("done"));
+      await panel
+        .getByRole("button", { name: ru ? "Назад к изменениям" : "Back to changes", exact: true })
+        .click();
+      await panel.getByRole("button", { name: ru ? "Обновить" : "Refresh", exact: true }).click();
+      await panel
+        .getByRole("button", { name: ru ? "Архивировать все" : "Archive all", exact: true })
+        .click();
+      await panel
+        .getByRole("button", { name: ru ? "Начать архивацию" : "Start archiving", exact: true })
+        .click();
+      await page.waitForFunction(() =>
+        __requests.some((r) => r.path === "toast" && r.body.message.includes("archive-session")),
+      );
+      const launch = await page.evaluate(
+        () => __requests.find((r) => r.path === "start-session").body,
+      );
+      assert.equal(
+        launch.title,
+        ru ? "Архивировать завершённые изменения OpenSpec" : "Archive completed OpenSpec changes",
+      );
+      prompts.push(launch.text);
+    }
+    assert.match(prompts[0].text, /^Use your skill tool/);
+    assert.match(prompts[2].text, /^Используй инструмент навыков/);
+    assert.deepEqual({ ...prompts[0], text: "" }, { ...prompts[2], text: "" });
+    assert.match(prompts[1], /^Archive all completed OpenSpec changes/);
+    assert.match(prompts[3], /^Архивируй все завершённые изменения OpenSpec/);
+    for (const command of [
+      "openspec list --json",
+      'openspec status --change "<name>" --json',
+      "openspec-archive-change",
+    ]) {
+      assert.ok(prompts[1].includes(command));
+      assert.ok(prompts[3].includes(command));
+    }
+    for (const policy of [
+      /положительным общим числом задач/,
+      /done.*skipped/,
+      /Не используй.*незавершённой работе/,
+      /последовательно/,
+      /после.*предыдущей архивации/,
+      /не вноси изменений в OpenSpec/,
+    ])
+      assert.match(prompts[3], policy);
+  });
+});
+
+test("viewer language operation feedback covers worktree inspection and partial launches in both languages", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    const tree = {
+      directory: "/retained",
+      name: "first-change",
+      branch: "first-change",
+      status: "ready",
+    };
+    const cases = [
+      { setup: "missing", en: /Cannot identify/, ru: /Не удалось определить/ },
+      {
+        setup: "error",
+        en: /Host workspace inspection failed.*Inspect/,
+        ru: /Не удалось проверить.*Проверьте/,
+      },
+      {
+        setup: "event-error",
+        en: /^Host workspace inspection failed\.$/,
+        ru: /^Не удалось проверить рабочее пространство хоста\.$/,
+      },
+      {
+        setup: "timeout",
+        en: /timed out.*No creation/,
+        ru: /Истекло время.*Создание не запрашивалось/,
+      },
+      {
+        setup: "coverage",
+        en: /Session inspection is incomplete/,
+        ru: /Проверка сеансов не завершена/,
+      },
+      {
+        setup: "collision",
+        en: /first-change already exists at \/retained/,
+        ru: /first-change уже существует по пути \/retained/,
+      },
+      {
+        setup: "session-collision",
+        en: /first-change already exists \(session existing-id\)/,
+        ru: /first-change уже существует \(сеанс existing-id\)/,
+      },
+      { setup: "unavailable", en: /no longer applicable/, ru: /больше не доступно для выполнения/ },
+      {
+        result: {
+          sessionId: null,
+          sent: "skipped",
+          failure: "bootstrap-failed",
+          directory: "/retained",
+          worktree: tree,
+        },
+        en: /Apply creation failed \(bootstrap-failed\).*first-change at \/retained is retained/,
+        ru: /Не удалось создать сеанс выполнения \(ошибка подготовки\).*first-change по пути \/retained сохранено/,
+      },
+      {
+        result: {
+          sessionId: null,
+          sent: "skipped",
+          failure: "session-create-failed",
+          directory: "/retained",
+          worktree: tree,
+        },
+        en: /Apply creation failed \(session-create-failed\)/,
+        ru: /Не удалось создать сеанс выполнения \(ошибка создания сеанса\)/,
+      },
+      ...["no-model", "failed", "skipped"].map((sent) => ({
+        result: { sessionId: "retained-id", sent, directory: "/retained", worktree: tree },
+        en: /Session retained-id exists, but Apply submission was not confirmed/,
+        ru: /Сеанс retained-id существует, но отправка запроса выполнения не подтверждена/,
+      })),
+      {
+        result: { sessionId: "retained-id", sent: "sent", directory: "/wrong", worktree: tree },
+        en: /unexpected worktree result/,
+        ru: /неожиданными данными рабочего дерева/,
+      },
+      {
+        result: {
+          sessionId: "retained-id",
+          sent: "sent",
+          directory: "/retained",
+          worktree: tree,
+          linked: false,
+        },
+        en: /Apply submitted in session retained-id.*reference could not be saved/,
+        ru: /Запрос выполнения отправлен в сеанс retained-id.*Не удалось сохранить ссылку/,
+      },
+      {
+        setup: "open-failed",
+        result: { sessionId: "retained-id", sent: "sent", directory: "/retained", worktree: tree },
+        en: /session retained-id exists, but it could not be opened.*will not be repeated/,
+        ru: /Сеанс выполнения retained-id существует, но открыть его не удалось.*не будет повторена/,
+      },
+      {
+        setup: "launch-error",
+        en: /outcome is uncertain.*Launch refused/,
+        ru: /Результат запуска выполнения неизвестен.*Launch refused/,
+      },
+    ];
+    const payloads = [];
+    for (const ru of [false, true]) {
+      for (const entry of cases) {
+        await page.goto(url);
+        const panel = page.frameLocator("iframe");
+        await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+        if (ru) await page.evaluate(() => __locale("ru"));
+        await page.evaluate(
+          ({ setup, result, tree }) => {
+            if (result) __startResult(result);
+            if (setup === "missing") __projects([]);
+            if (setup === "error") __workspaceState("error");
+            if (setup === "event-error") __workspaceState("loading", "error");
+            if (setup === "timeout") __workspaceState("loading");
+            if (setup === "coverage")
+              __sessionCoverage([{ directory: "/retained", state: "error" }]);
+            if (setup === "collision") __worktrees([tree]);
+            if (setup === "session-collision")
+              __sessions([
+                {
+                  id: "existing-id",
+                  title: "Raw title",
+                  projectId: "origin-project",
+                  directory: "/retained",
+                  parentId: null,
+                  createdAt: 0,
+                  updatedAt: 0,
+                  archivedAt: null,
+                  worktree: tree,
+                  activity: "idle",
+                  outcome: null,
+                  items: [],
+                },
+              ]);
+            if (setup === "unavailable") __remove("first-change");
+            if (setup === "open-failed") __failOpenSession();
+            if (setup === "launch-error") __startError("HOST_TIMEOUT");
+          },
+          { ...entry, tree },
+        );
+        await panel
+          .locator(".change-card")
+          .filter({ hasText: "first-change" })
+          .getByRole("button", { name: ru ? "Выполнить" : "Apply", exact: true })
+          .click();
+        await panel
+          .getByRole("menuitem", {
+            name: ru ? "Запустить в новом рабочем дереве" : "Run in new worktree",
+            exact: true,
+          })
+          .click();
+        await page.waitForFunction(
+          (openFailed) =>
+            __requests.filter((r) => r.path === "toast").length >= (openFailed ? 2 : 1),
+          entry.setup === "open-failed",
+        );
+        const requests = await page.evaluate(() => __requests);
+        const toast = requests.filter((r) => r.path === "toast").at(-1).body;
+        assert.match(
+          toast.message,
+          ru ? entry.ru : entry.en,
+          entry.setup ?? JSON.stringify(entry.result),
+        );
+        const launches = requests.filter((r) => r.path === "start-session");
+        assert.equal(launches.length, entry.result || entry.setup === "launch-error" ? 1 : 0);
+        if (launches.length) {
+          assert.equal(
+            launches[0].body.title,
+            ru ? "Выполнить first-change" : "Apply first-change",
+          );
+          assert.match(
+            launches[0].body.text,
+            ru
+              ? /^Используй инструмент навыков.*openspec-apply-change/
+              : /^Use your skill tool.*openspec-apply-change/,
+          );
+          assert.match(
+            launches[0].body.text,
+            ru
+              ? /проверь снова.*При блокировке.*не отмечай незавершённую работу/s
+              : /verify again.*If blocked.*rather than marking unfinished work complete/s,
+          );
+          payloads.push({ ...launches[0].body, title: undefined, text: undefined });
+        }
+        assert.equal(
+          requests.filter((r) => r.path === "open-session").length,
+          entry.setup === "open-failed" || entry.result?.linked === false ? 1 : 0,
+        );
+        assert.equal(await page.evaluate(() => __draft()), "Earlier draft");
+      }
+    }
+    assert.deepEqual(payloads.slice(0, payloads.length / 2), payloads.slice(payloads.length / 2));
+  });
+});
+
+test("viewer language operation feedback covers archive failures references and late context without retry", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    const cases = [
+      {
+        sent: "sent",
+        linked: true,
+        en: /Archive prompt submitted in session archive-id.*refresh/,
+        ru: /Запрос архивации отправлен в сеанс archive-id.*Обновите/,
+      },
+      {
+        sent: "sent",
+        linked: false,
+        en: /reference could not be saved/,
+        ru: /сохранить ссылку на сценарий не удалось/,
+      },
+      {
+        sent: "no-model",
+        linked: false,
+        en: /No model was available.*reference was not saved/,
+        ru: /Нет доступной модели.*Ссылка на сценарий не сохранена/,
+      },
+      ...["failed", "skipped"].map((sent) => ({
+        sent,
+        linked: true,
+        en: new RegExp(`Submission ${sent}`),
+        ru: new RegExp(`Отправка: ${sent === "failed" ? "ошибка" : "пропущено"}`),
+      })),
+      ...["NOT_GRANTED", "DISABLED", "NO_DIRECTORY", "HOST_REJECTED", "HOST_UNAVAILABLE"].map(
+        (error) => ({
+          error,
+          en: /Archive launch failed: Launch refused/,
+          ru: /Не удалось запустить архивацию: Launch refused/,
+        }),
+      ),
+      {
+        error: "HOST_TIMEOUT",
+        en: /Archive launch outcome is uncertain/,
+        ru: /Результат запуска архивации неизвестен/,
+      },
+      {
+        noSession: true,
+        en: /archive session could not be created/,
+        ru: /Не удалось создать сеанс архивации/,
+      },
+      { late: true },
+    ];
+    for (const ru of [false, true]) {
+      for (const entry of cases) {
+        await page.goto(url);
+        const panel = page.frameLocator("iframe");
+        await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+        await page.evaluate(
+          ({ ru, entry }) => {
+            if (ru) __locale("ru");
+            __edit("done");
+            if (entry.error) __startError(entry.error);
+            else if (entry.noSession)
+              __startResult({
+                sessionId: null,
+                sent: "skipped",
+                directory: "/retained",
+                worktree: {
+                  directory: "/retained",
+                  name: "retained",
+                  branch: "retained",
+                  status: "ready",
+                },
+                failure: "session-create-failed",
+              });
+            else
+              __startResult({
+                sessionId: "archive-id",
+                sent: entry.sent ?? "sent",
+                linked: entry.linked ?? true,
+              });
+            if (entry.late) __holdStart();
+          },
+          { ru, entry },
+        );
+        await panel.getByRole("button", { name: ru ? "Обновить" : "Refresh", exact: true }).click();
+        await panel
+          .getByRole("button", { name: ru ? "Архивировать все" : "Archive all", exact: true })
+          .click();
+        await panel
+          .getByRole("button", { name: ru ? "Начать архивацию" : "Start archiving", exact: true })
+          .click();
+        await page.waitForFunction(() => __requests.some((r) => r.path === "start-session"));
+        if (entry.late) {
+          await page.evaluate(() => {
+            __session("different-session");
+            __releaseStart();
+          });
+          await page.waitForFunction(
+            (label) =>
+              [
+                ...document
+                  .querySelector("iframe")
+                  .contentDocument.querySelectorAll(".toolbar button"),
+              ].some((button) => button.textContent === label && !button.disabled),
+            ru ? "Архивировать все" : "Archive all",
+          );
+          assert.equal(
+            await page.evaluate(() => __requests.filter((r) => r.path === "toast").length),
+            0,
+          );
+        } else {
+          await page.waitForFunction(() => __requests.some((r) => r.path === "toast"));
+          const toast = await page.evaluate(() => __requests.find((r) => r.path === "toast").body);
+          assert.match(toast.message, ru ? entry.ru : entry.en);
+          if (entry.error === "HOST_TIMEOUT") assert.equal(toast.persistent, true);
+        }
+        assert.equal(
+          await page.evaluate(
+            () =>
+              __requests.filter((r) => ["start-session", "prompt", "compose"].includes(r.path))
+                .length,
+          ),
+          1,
+        );
+      }
+    }
+  });
+});
+
+test("viewer language retained detail preserves actual tab focus source selection expansion and scroll", async () => {
+  await withPanel(async (browser, url) => {
+    for (const width of [320, 1076]) {
+      const page = await browser.newPage({ viewport: { width, height: 700 } });
+      await page.goto(url);
+      await page.evaluate(() =>
+        __document("proposal.md", "Original source paragraph\n\n".repeat(200)),
+      );
+      await page.evaluate(() => __document("specs/2.md", "Second spec source\n\n".repeat(200)));
+      const panel = page.frameLocator("iframe");
+      await panel.getByRole("button", { name: "first-change", exact: true }).click();
+      await panel.locator(".document-content p").first().waitFor();
+      await panel.locator('.artifact-tabs [data-id="artifact:specs"]').focus();
+      await panel.locator(".detail-content").evaluate((node) => {
+        const text = node.querySelector(".document-content p").firstChild;
+        const range = document.createRange();
+        range.setStart(text, 1);
+        range.setEnd(text, 8);
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+        window.originalDocumentText = text;
+        node.scrollTop = 200;
+      });
+      const before = await page.evaluate(() => __requests.length);
+      for (const mode of ["light", "dark"]) {
+        await page.evaluate((mode) => {
+          __theme(mode);
+          __locale("ru-RU");
+        }, mode);
+        await panel
+          .getByRole("button", { name: "Копировать имя изменения", exact: true })
+          .waitFor();
+        assert.match(
+          await panel
+            .locator('.artifact-tabs [data-id="artifact:specs"]')
+            .getAttribute("aria-label"),
+          /Спецификации · Написано/,
+        );
+        assert.deepEqual(
+          await panel
+            .locator(".detail-content")
+            .evaluate((node) => [
+              document.activeElement.dataset.id,
+              node.querySelector(".document-content p").firstChild === originalDocumentText,
+              getSelection().toString(),
+              node.scrollTop,
+              node.querySelector("details").open,
+              document.querySelector('[role=tab][aria-selected="true"]').dataset.id,
+            ]),
+          ["artifact:specs", true, "riginal", 200, true, "artifact:proposal"],
+        );
+        assert.equal(await page.evaluate(() => __requests.length), before);
+        await page.evaluate(() => __locale("en"));
+        await panel.getByRole("button", { name: "Copy change name", exact: true }).waitFor();
+      }
+      await panel.getByRole("tab", { name: /Specs/ }).click();
+      await panel.locator(".detail-content details").nth(1).locator("summary").click();
+      await panel
+        .locator(".detail-content details")
+        .nth(1)
+        .locator(".document-content p")
+        .first()
+        .waitFor();
+      await panel.locator('.artifact-tabs [data-id="artifact:tasks"]').focus();
+      await panel.locator(".detail-content").evaluate((node) => {
+        window.retainedSpec = node
+          .querySelectorAll("details")[1]
+          .querySelector(".document-content p").firstChild;
+        const range = document.createRange();
+        range.setStart(retainedSpec, 0);
+        range.setEnd(retainedSpec, 6);
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+        node.scrollTop = 150;
+      });
+      const specReads = await page.evaluate(() => __requests.length);
+      await page.evaluate(() => __locale("ru"));
+      await panel.getByRole("tab", { name: /Спецификации/ }).waitFor();
+      assert.deepEqual(
+        await panel
+          .locator(".detail-content")
+          .evaluate((node) => [
+            [...node.querySelectorAll("details")].map((detail) => detail.open),
+            node.querySelectorAll("details")[1].querySelector(".document-content p").firstChild ===
+              retainedSpec,
+            getSelection().toString(),
+            node.scrollTop,
+            document.activeElement.dataset.id,
+          ]),
+        [[false, true, false], true, "Second", 150, "artifact:tasks"],
+      );
+      assert.equal(await page.evaluate(() => __requests.length), specReads);
+      await panel.getByRole("tab", { name: /Задачи/ }).click();
+      await panel.getByText("1.1 CLI description", { exact: true }).waitFor();
+      await page.evaluate(() => __locale("ru"));
+      await panel.getByRole("tab", { name: /Задачи/ }).waitFor();
+      await panel.getByRole("img", { name: "Ожидает выполнения", exact: true }).waitFor();
+      assert.equal(await panel.locator(".task-title").first().textContent(), "1.1 CLI description");
+      await page.close();
+    }
+  });
+});
+
+test("viewer language workflow payloads localize every registry entry without changing requests", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+    for (const [surface, stage] of [
+      [".heading-actions", "ready"],
+      ...["planning", "ready", "progress", "complete"].flatMap((stage) => [
+        [".change-card:first-child .card-actions", stage],
+        [".detail-footer", stage],
+      ]),
+    ]) {
+      await page.goto(url + "?hold-ready");
+      await page.waitForFunction(() => typeof __releaseReady === "function");
+      await page.evaluate((stage) => {
+        __workflowStage(stage);
+        __releaseReady();
+      }, stage);
+      await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+      if (surface === ".detail-footer")
+        await panel.getByRole("button", { name: "first-change", exact: true }).click();
+      const owner = panel.locator(surface).first();
+      const results = [];
+      for (const locale of ["en", "ru"]) {
+        await page.evaluate((locale) => __locale(locale), locale);
+        if (locale === "ru" && surface !== ".detail-footer")
+          await panel
+            .getByRole("progressbar", { name: /из .* задач выполнено/ })
+            .first()
+            .waitFor();
+        const trigger = owner.getByRole("button", {
+          name: locale === "en" ? "Workflows" : "Сценарии",
+          exact: true,
+        });
+        const count = surface === ".heading-actions" ? 6 : 7;
+        const payloads = [];
+        for (let index = 0; index < count; index++) {
+          await trigger.click();
+          const rows = panel.getByRole("menuitem");
+          if (locale === "ru") {
+            assert.match(await rows.nth(index).getAttribute("aria-label"), /[А-Яа-я]/);
+            assert.match(
+              await rows.nth(index).locator(".workflow-description").textContent(),
+              /[А-Яа-я]/,
+            );
+          }
+          const before = await page.evaluate(
+            () => __requests.filter((r) => r.path === "compose").length,
+          );
+          await rows.nth(index).click();
+          await page.waitForFunction(
+            (before) => __requests.filter((r) => r.path === "compose").length > before,
+            before,
+          );
+          payloads.push(
+            await page.evaluate(() => __requests.filter((r) => r.path === "compose").at(-1).body),
+          );
+        }
+        results.push(payloads);
+      }
+      for (let index = 0; index < results[0].length; index++) {
+        const en = results[0][index],
+          ru = results[1][index];
+        assert.match(en.text, /^Use your skill tool/);
+        assert.match(ru.text, /^Используй инструмент навыков/);
+        assert.equal(ru.text.match(/openspec-[a-z-]+/)[0], en.text.match(/openspec-[a-z-]+/)[0]);
+        assert.deepEqual({ ...en, text: "" }, { ...ru, text: "" });
+        const policies =
+          surface === ".heading-actions"
+            ? [
+                /задумал пользователь.*существующего изменения/,
+                /без изменения файлов.*реализации/,
+                /задумал пользователь/,
+                /задумал пользователь/,
+                /выбор кандидатов.*оценку конфликтов.*подтверждение/,
+                /разрешение на настройку.*выбор.*задачи/,
+              ]
+            : [
+                /не более одного.*артефакта.*Не создавай.*не реализуй/s,
+                /проверь снова.*блокировк/s,
+                /Не реализуй задачи.*не архивируй/,
+                /обязательные вопросы.*Не реализуй/s,
+                /не предполагай.*проверено.*разрешена/,
+                /без реализации.*архивации/,
+                /без изменения файлов.*реализации/,
+              ];
+        assert.match(ru.text, policies[index]);
+      }
+    }
+    assert.equal(
+      await page.evaluate(() =>
+        __requests.some((r) => ["prompt", "start-session"].includes(r.path)),
+      ),
+      false,
+    );
+    await page.close();
+  });
+});
+
+test("viewer language retained detail translates readiness custom tabs retries fallback and retained local errors", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    const panel = page.frameLocator("iframe");
+    await page.goto(url + "?hold-ready");
+    await page.waitForFunction(() => typeof __releaseReady === "function");
+    await page.evaluate(() => {
+      __readiness("pending");
+      __releaseReady();
+    });
+    await panel.getByRole("button", { name: "first-change", exact: true }).click();
+    await page.evaluate(() => __locale("ru"));
+    await panel
+      .getByText("Артефакт готов к написанию. Продолжите планирование в чате.", { exact: true })
+      .waitFor();
+    await panel.getByRole("tab", { name: /Спецификации/ }).click();
+    await panel
+      .getByText("Заблокировано, пока не написаны или не пропущены: Предложение.", { exact: true })
+      .waitFor();
+    await panel.getByRole("tab", { name: /Проектирование/ }).click();
+    await panel.getByText("Этот артефакт пропущен.", { exact: true }).waitFor();
+    await page.goto(url);
+    await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+    await page.evaluate(() => {
+      __custom();
+      __failDocument();
+      __failTasks();
+    });
+    await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    await panel.getByRole("button", { name: "first-change", exact: true }).click();
+    await panel.getByRole("button", { name: "Retry document", exact: true }).waitFor();
+    const retry = await panel
+      .getByRole("button", { name: "Retry document", exact: true })
+      .elementHandle();
+    const before = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru"));
+    await panel.getByRole("button", { name: "Повторить чтение документа", exact: true }).waitFor();
+    assert.equal(
+      await panel
+        .getByRole("button", { name: "Повторить чтение документа", exact: true })
+        .evaluate((node, original) => node === original, retry),
+      true,
+    );
+    await panel.getByText("Retry this document", { exact: true }).waitFor();
+    await panel.getByRole("tab", { name: /checklist/ }).waitFor();
+    assert.equal(await page.evaluate(() => __requests.length), before);
+    await panel.getByRole("tab", { name: /Задачи/ }).click();
+    await panel.getByRole("button", { name: "Повторить чтение задач", exact: true }).waitFor();
+    await panel.getByText("Retry these tasks", { exact: true }).waitFor();
+
+    await page.goto(url);
+    await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+    await page.evaluate(() => __document("proposal.md", "x".repeat(4 * 1024 * 1024)));
+    await panel.getByRole("button", { name: "first-change", exact: true }).click();
+    await panel
+      .getByText("Session read limit reached. Refresh to clear retained reads.", { exact: true })
+      .waitFor();
+    const reads = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru"));
+    await panel
+      .getByText(
+        "Достигнут лимит чтения сеанса. Обновите данные, чтобы очистить сохранённые результаты чтения.",
+        { exact: true },
+      )
+      .waitFor();
+    await page.evaluate(() => __locale("en"));
+    await panel
+      .getByText("Session read limit reached. Refresh to clear retained reads.", { exact: true })
+      .waitFor();
+    assert.equal(await page.evaluate(() => __requests.length), reads);
+
+    await page.goto(url);
+    await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+    await panel.locator("body").evaluate(() => {
+      const replace = Element.prototype.replaceChildren;
+      Element.prototype.replaceChildren = function (...nodes) {
+        if (this.classList.contains("document-content")) {
+          Element.prototype.replaceChildren = replace;
+          throw new Error("fixture renderer failure");
+        }
+        return replace.apply(this, nodes);
+      };
+    });
+    await panel.getByRole("button", { name: "first-change", exact: true }).click();
+    await panel
+      .getByText("Document rendering failed. Original source is shown.", { exact: true })
+      .waitFor();
+    const source = await panel.locator(".document-content pre").elementHandle();
+    await page.evaluate(() => __locale("ru"));
+    await panel
+      .getByText("Не удалось отобразить документ. Показан исходный текст.", { exact: true })
+      .waitFor();
+    assert.equal(
+      await panel
+        .locator(".document-content pre")
+        .evaluate((node, original) => node === original, source),
+      true,
+    );
+    assert.equal(
+      await panel.locator(".document-content pre").textContent(),
+      "First version of proposal",
+    );
+    await panel.getByRole("button", { name: "Назад к изменениям", exact: true }).click();
+    await page.evaluate(() => __batchReply("malformed"));
+    await panel.getByRole("button", { name: "Обновить", exact: true }).click();
+    await panel
+      .getByText("Локальный сервис OpenSpec вернул недопустимые данные.", { exact: true })
+      .waitFor();
+    const clientReads = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("en"));
+    await panel
+      .getByText("The local OpenSpec service returned invalid data.", { exact: true })
+      .waitFor();
+    assert.equal(await page.evaluate(() => __requests.length), clientReads);
+    await page.close();
+  });
+});
+
+test("viewer language workflow payloads primary stages and Apply destinations match on card and detail", async () => {
+  await withPanel(async (browser, url) => {
+    for (const surface of ["card", "detail"]) {
+      for (const stage of ["planning", "ready", "progress", "complete"]) {
+        const page = await browser.newPage();
+        await page.goto(url + "?hold-ready");
+        await page.waitForFunction(() => typeof __releaseReady === "function");
+        await page.evaluate((stage) => {
+          __workflowStage(stage);
+          __releaseReady();
+        }, stage);
+        const panel = page.frameLocator("iframe");
+        await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+        if (surface === "detail")
+          await panel.getByRole("button", { name: "first-change", exact: true }).click();
+        const owner =
+          surface === "detail"
+            ? panel.locator(".detail-footer")
+            : panel
+                .locator(".change-card")
+                .filter({ has: panel.getByRole("button", { name: "first-change", exact: true }) });
+        const payloads = [];
+        for (const locale of ["en", "ru"]) {
+          await page.evaluate((locale) => __locale(locale), locale);
+          const labels =
+            locale === "en"
+              ? {
+                  planning: "Plan",
+                  ready: "Apply",
+                  progress: "Apply",
+                  complete: "Archive",
+                }
+              : {
+                  planning: "Планировать",
+                  ready: "Выполнить",
+                  progress: "Выполнить",
+                  complete: "Архивировать",
+                };
+          await owner.getByRole("button", { name: labels[stage], exact: true }).click();
+          if (["ready", "progress"].includes(stage))
+            await panel
+              .getByRole("menuitem", {
+                name: locale === "en" ? "Prepare in current chat" : "Подготовить в текущем чате",
+                exact: true,
+              })
+              .click();
+          await page.waitForFunction(
+            (count) => __requests.filter((r) => r.path === "compose").length === count,
+            payloads.length + 1,
+          );
+          payloads.push(
+            await page.evaluate(() => __requests.filter((r) => r.path === "compose").at(-1).body),
+          );
+        }
+        assert.match(payloads[0].text, /^Use your skill tool/);
+        assert.match(payloads[1].text, /^Используй инструмент навыков/);
+        assert.deepEqual({ ...payloads[0], text: "" }, { ...payloads[1], text: "" });
+        if (["ready", "progress"].includes(stage)) {
+          if (stage === "progress") {
+            assert.match(
+              payloads[0].text,
+              /\n1 of 2 tasks complete\. Pick up where implementation left off/,
+            );
+            assert.match(payloads[1].text, /\nВыполнено задач: 1 из 2\. Продолжи реализацию/);
+          } else {
+            assert.doesNotMatch(payloads[0].text, /\ntasks complete|\n\d+ of/);
+            assert.doesNotMatch(payloads[1].text, /\nВыполнено задач:/);
+          }
+          const launches = [];
+          for (const locale of ["en", "ru"]) {
+            await page.evaluate((locale) => __locale(locale), locale);
+            await owner
+              .getByRole("button", { name: locale === "en" ? "Apply" : "Выполнить", exact: true })
+              .click();
+            await panel
+              .getByRole("menuitem", {
+                name: locale === "en" ? "Run in new worktree" : "Запустить в новом рабочем дереве",
+                exact: true,
+              })
+              .click();
+            await page.waitForFunction(
+              (count) => __requests.filter((r) => r.path === "start-session").length === count,
+              launches.length + 1,
+            );
+            await page.waitForFunction(
+              (count) => __requests.filter((r) => r.path === "toast").length >= count,
+              payloads.length + launches.length + 1,
+            );
+            launches.push(
+              await page.evaluate(
+                () => __requests.filter((r) => r.path === "start-session").at(-1).body,
+              ),
+            );
+          }
+          assert.equal(launches[0].text, payloads[0].text);
+          assert.equal(launches[1].text, payloads[1].text);
+          assert.deepEqual(launches[0].worktree, launches[1].worktree);
+        }
+        if (["planning", "complete"].includes(stage)) {
+          const quick = [];
+          for (const locale of ["en", "ru"]) {
+            await page.evaluate((locale) => __locale(locale), locale);
+            await owner
+              .getByRole("button", {
+                name:
+                  stage === "planning"
+                    ? locale === "en"
+                      ? "Explore"
+                      : "Исследовать"
+                    : locale === "en"
+                      ? "Verify"
+                      : "Проверить",
+                exact: true,
+              })
+              .click();
+            await page.waitForFunction(
+              (count) => __requests.filter((r) => r.path === "compose").length === count,
+              3 + quick.length,
+            );
+            quick.push(
+              await page.evaluate(() => __requests.filter((r) => r.path === "compose").at(-1).body),
+            );
+          }
+          assert.match(quick[0].text, /^Use your skill tool/);
+          assert.match(quick[1].text, /^Используй инструмент навыков/);
+          assert.match(
+            quick[1].text,
+            stage === "planning"
+              ? /openspec-explore.*\n.*Цель: Read the proposal/s
+              : /openspec-verify-change/,
+          );
+          assert.match(
+            quick[1].text,
+            stage === "planning"
+              ? /без изменения файлов и без реализации/
+              : /без реализации и архивации/,
+          );
+          assert.deepEqual({ ...quick[0], text: "" }, { ...quick[1], text: "" });
+        }
+        await page.close();
+      }
+    }
+  });
+});
+
+test("viewer language workflow prompts follow resolved preferences and preserve literal goals without inventing missing goals", async () => {
+  await withPanel(async (browser, url) => {
+    const goal = 'Keep "quoted" paths /specs/план\nand mixed English + русский unchanged';
+    for (const preference of ["en", "ru", "auto"]) {
+      for (const recorded of [goal, null]) {
+        const page = await browser.newPage();
+        await page.goto(
+          url + "?hold-ready&language=" + encodeURIComponent(JSON.stringify(preference)),
+        );
+        await page.waitForFunction(() => typeof __releaseReady === "function");
+        await page.evaluate(
+          ({ recorded, preference }) => {
+            __workflowStage("planning");
+            __goal("first-change", recorded);
+            __locale(preference === "en" ? "ru-RU" : "en-AU");
+            __releaseReady();
+          },
+          { recorded, preference },
+        );
+        const panel = page.frameLocator("iframe");
+        await panel.locator(".language-row button:not(:disabled)").waitFor();
+        await panel.getByRole("button", { name: "first-change", exact: true }).click();
+        let count = 0;
+        for (const locale of [preference === "en" ? "ru-RU" : "en-AU", "ru-RU", "fr-FR"]) {
+          await page.evaluate((locale) => __locale(locale), locale);
+          const ru = preference === "ru" || (preference === "auto" && locale === "ru-RU");
+          await panel.locator(`html[lang="${ru ? "ru" : "en"}"]`).waitFor();
+          const reads = await page.evaluate(
+            () => __requests.filter((r) => r.path.startsWith("/")).length,
+          );
+          await panel
+            .locator(".detail-footer")
+            .getByRole("button", { name: ru ? "Планировать" : "Plan", exact: true })
+            .click();
+          await page.waitForFunction(
+            (count) => __requests.filter((r) => r.path === "compose").length === count,
+            ++count,
+          );
+          const prompt = await page.evaluate(
+            () => __requests.filter((r) => r.path === "compose").at(-1).body.text,
+          );
+          assert.match(
+            prompt,
+            ru
+              ? /^Используй инструмент навыков.*openspec-continue-change/
+              : /^Use your skill tool.*openspec-continue-change/,
+          );
+          if (recorded) assert.ok(prompt.includes(`\n${ru ? "Цель" : "Goal"}: ${goal}\n\n`));
+          else assert.doesNotMatch(prompt, /\n(?:Goal|Цель):/);
+          assert.match(
+            prompt,
+            ru
+              ? /не выдумывай цель.*не записывай её метаданные автоматически/
+              : /do not invent a goal or write goal metadata automatically/,
+          );
+          assert.equal(
+            await page.evaluate(() => __requests.filter((r) => r.path.startsWith("/")).length),
+            reads,
+          );
+          if (ru) {
+            await panel.getByRole("tablist", { name: "Артефакты планирования" }).waitFor();
+          }
+        }
+        await page.evaluate(() => __failStorage("set"));
+        await panel.locator(".language-row button").click();
+        await panel
+          .getByRole("option", { name: preference === "ru" ? "English" : "Русский", exact: true })
+          .click();
+        await panel.locator(".language-warning:not(:empty)").waitFor();
+        await panel
+          .locator(".detail-footer")
+          .getByRole("button", { name: preference === "ru" ? "Планировать" : "Plan", exact: true })
+          .click();
+        await page.waitForFunction(
+          (count) => __requests.filter((r) => r.path === "compose").length === count,
+          ++count,
+        );
+        assert.match(
+          await page.evaluate(
+            () => __requests.filter((r) => r.path === "compose").at(-1).body.text,
+          ),
+          preference === "ru" ? /^Используй инструмент навыков/ : /^Use your skill tool/,
+        );
+        assert.equal(
+          await page.evaluate(() =>
+            __requests.some((r) =>
+              ["start-session", "prompt", "/create", "/delete"].includes(r.path),
+            ),
+          ),
+          false,
+        );
+        await page.close();
+      }
+    }
+  });
+});
+
+test("viewer language workflow prompts capture accepted worktree and composer language but emit current feedback", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    const card = panel
+      .locator(".change-card")
+      .filter({ has: panel.getByRole("button", { name: "first-change", exact: true }) });
+    await card.waitFor();
+    await page.evaluate(() => {
+      __workspaceState("loading");
+      __startResult({
+        sessionId: "captured-session",
+        sent: "sent",
+        linked: true,
+        directory: "/retained",
+        worktree: {
+          directory: "/retained",
+          name: "first-change",
+          branch: "first-change",
+          status: "ready",
+        },
+      });
+    });
+    await card.getByRole("button", { name: "Apply", exact: true }).click();
+    await panel.getByRole("menuitem", { name: "Run in new worktree", exact: true }).click();
+    await page.waitForFunction(() => __requests.some((r) => r.path === "workspace-subscribe"));
+    assert.equal(
+      await page.evaluate(() => __requests.filter((r) => r.path === "start-session").length),
+      0,
+    );
+    await page.evaluate(() => __locale("ru"));
+    await panel.locator('html[lang="ru"]').waitFor();
+    await page.evaluate(() => __releaseWorkspace());
+    await page.waitForFunction(() => __requests.some((r) => r.path === "toast"));
+    const launch = await page.evaluate(
+      () => __requests.find((r) => r.path === "start-session").body,
+    );
+    assert.equal(launch.title, "Apply first-change");
+    assert.match(launch.text, /^Use your skill tool.*openspec-apply-change/);
+    assert.match(
+      await page.evaluate(() => __requests.find((r) => r.path === "toast").body.message),
+      /Запрос выполнения отправлен в сеанс captured-session/,
+    );
+    await page.evaluate(() => __holdCompose());
+    await card.getByRole("button", { name: "Выполнить", exact: true }).click();
+    await panel.getByRole("menuitem", { name: "Подготовить в текущем чате", exact: true }).click();
+    await page.waitForFunction(() => __requests.some((r) => r.path === "compose"));
+    const accepted = await page.evaluate(
+      () => __requests.find((r) => r.path === "compose").body.text,
+    );
+    assert.match(accepted, /^Используй инструмент навыков/);
+    await page.evaluate(() => __locale("en"));
+    await panel.locator('html[lang="en"]').waitFor();
+    await page.evaluate(() => __releaseCompose());
+    await page.waitForFunction(() => __requests.filter((r) => r.path === "toast").length === 2);
+    assert.equal(await page.evaluate(() => __draft()), accepted);
+    assert.equal(
+      await page.evaluate(() => __requests.filter((r) => r.path === "toast").at(-1).body.message),
+      "Workflow prompt prepared in the open composer.",
+    );
+    await page.evaluate(() => __locale("ru"));
+    await panel.locator('html[lang="ru"]').waitFor();
+    assert.equal(await page.evaluate(() => __draft()), accepted);
+    assert.deepEqual(
+      await page.evaluate(() =>
+        ["start-session", "compose", "prompt"].map(
+          (path) => __requests.filter((r) => r.path === path).length,
+        ),
+      ),
+      [1, 1, 0],
+    );
+    await page.close();
+  });
+});
+
+test("viewer language workflow archive prompt uses confirmation language without replay or board reads", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url + "?hold-ready");
+    await page.waitForFunction(() => typeof __releaseReady === "function");
+    await page.evaluate(() => {
+      __workflowStage("complete");
+      __releaseReady();
+    });
+    const panel = page.frameLocator("iframe");
+    await panel.getByRole("button", { name: "Archive all", exact: true }).click();
+    const reads = await page.evaluate(
+      () => __requests.filter((r) => r.path.startsWith("/")).length,
+    );
+    await page.evaluate(() => __locale("ru"));
+    await panel.getByRole("button", { name: "Начать архивацию", exact: true }).click();
+    await page.waitForFunction(() => __requests.some((r) => r.path === "toast"));
+    const launch = await page.evaluate(
+      () => __requests.find((r) => r.path === "start-session").body,
+    );
+    assert.equal(launch.title, "Архивировать завершённые изменения OpenSpec");
+    assert.match(launch.text, /^Архивируй все завершённые изменения OpenSpec/);
+    await page.evaluate(() => __locale("en"));
+    await panel.locator('html[lang="en"]').waitFor();
+    assert.equal(
+      await page.evaluate(() => __requests.filter((r) => r.path.startsWith("/")).length),
+      reads,
+    );
+    assert.deepEqual(
+      await page.evaluate(() =>
+        ["start-session", "compose", "prompt"].map(
+          (path) => __requests.filter((r) => r.path === path).length,
+        ),
+      ),
+      [1, 0, 0],
+    );
+    await page.close();
+  });
+});
+
+test("viewer language workflow payloads retain active menu focus description scroll and stale capture", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage({ viewport: { width: 320, height: 700 } });
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+    const trigger = panel.locator(".heading-actions .workflow-menu button");
+    await trigger.click();
+    await page.keyboard.press("End");
+    const menu = panel.getByRole("menu");
+    const active = await menu.getAttribute("aria-activedescendant");
+    const menuScroll = await menu.evaluate((node) => node.scrollTop);
+    const before = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => {
+      __locale("ru");
+      __theme("light");
+    });
+    await panel.getByRole("menuitem", { name: "Введение в работу", exact: true }).waitFor();
+    assert.equal(await menu.getAttribute("aria-activedescendant"), active);
+    assert.equal(await menu.evaluate((node) => node.scrollTop), menuScroll);
+    assert.equal(await menu.evaluate((node) => document.activeElement === node), true);
+    assert.match(
+      await menu.locator('[data-active="true"] .workflow-description').textContent(),
+      /полного цикла/,
+    );
+    assert.equal(await panel.locator(".button-tooltip").count(), 0);
+    assert.equal(await page.evaluate(() => __requests.length), before);
+    await page.evaluate(() => __session("replacement"));
+    await page.keyboard.press("Enter");
+    await panel.getByRole("menu").waitFor({ state: "hidden" });
+    assert.equal(
+      await page.evaluate(() => __requests.filter((r) => r.path === "compose").length),
+      0,
+    );
+    await trigger.click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => __requests.some((r) => r.path === "compose"));
+    assert.match(await page.evaluate(() => __draft()), /openspec-onboard/);
+    await page.close();
+  });
+});
+
+test("viewer language preference persists only successful choices and blocks concurrent writes", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    const picker = panel.locator(".language-row button");
+    await picker.waitFor({ timeout: 2000 });
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    const reads = await page.evaluate(() => __requests.length);
+    await picker.click();
+    await panel.getByRole("option", { name: "Русский", exact: true }).click();
+    await panel.getByRole("searchbox", { name: "Поиск изменений" }).waitFor();
+    assert.equal(await panel.locator("html").getAttribute("lang"), "ru");
+    await page.evaluate(() => {
+      __holdStorage("set");
+      __failStorage("set");
+    });
+    await picker.click();
+    await panel.getByRole("option", { name: "English", exact: true }).click();
+    assert.equal(await picker.getAttribute("aria-busy"), "true");
+    assert.equal(await picker.evaluate((node) => document.activeElement === node), true);
+    await picker.dispatchEvent("click");
+    await picker.press("ArrowDown");
+    assert.equal(await panel.getByRole("listbox").count(), 0);
+    assert.equal(await page.evaluate(() => __storageCalls.filter((c) => c.op === "set").length), 2);
+    await page.evaluate(() => __releaseStorage());
+    await panel.locator(".language-warning:not(:empty)").waitFor();
+    assert.equal(await panel.locator("html").getAttribute("lang"), "ru");
+    assert.match(await picker.textContent(), /Русский/);
+    assert.equal(await page.evaluate(() => __requests.length), reads);
+    await picker.click();
+    await panel.getByRole("option", { name: "Русский", exact: true }).click();
+    assert.equal(await page.evaluate(() => __storageCalls.filter((c) => c.op === "set").length), 2);
+    await page.evaluate(() => __remount());
+    await panel.getByRole("searchbox", { name: "Поиск изменений" }).waitFor();
+    assert.deepEqual(await page.evaluate(() => __storageCalls.filter((c) => c.op === "get")), [
+      { op: "get", key: "ui.language" },
+      { op: "get", key: "ui.language" },
+    ]);
+  });
+});
+
+test("viewer language preference automatic read failures invalid values and latest locale", async () => {
+  await withPanel(async (browser, url) => {
+    for (const saved of [undefined, "auto", "en", "ru", null, "bad", 42]) {
+      const page = await browser.newPage();
+      await page.goto(
+        url +
+          "?hold-storage=get" +
+          (saved === undefined ? "" : "&language=" + encodeURIComponent(JSON.stringify(saved))),
+      );
+      const panel = page.frameLocator("iframe");
+      const picker = panel.locator(".language-row button");
+      await picker.waitFor({ timeout: 2000 });
+      assert.equal(await picker.isDisabled(), true);
+      await panel.getByRole("button", { name: "first-change", exact: true }).waitFor();
+      await page.evaluate(() => __locale("RU-ru"));
+      await panel.getByRole("searchbox", { name: "Поиск изменений" }).waitFor();
+      await page.evaluate(() => __releaseStorage());
+      await panel.locator(".language-row button:not(:disabled)").waitFor();
+      assert.equal(await panel.locator("html").getAttribute("lang"), saved === "en" ? "en" : "ru");
+      assert.equal(
+        (await panel.locator(".language-warning").textContent()) !== "",
+        saved === null || saved === "bad" || saved === 42,
+      );
+      await page.evaluate(() => __locale("fr-FR"));
+      await panel.locator(`html[lang="${saved === "ru" ? "ru" : "en"}"]`).waitFor();
+      assert.equal(await page.evaluate(() => __storageCalls.length), 1);
+      await page.close();
+    }
+    const page = await browser.newPage();
+    await page.goto(url + "?fail-storage=get");
+    const panel = page.frameLocator("iframe");
+    await panel.locator(".language-warning:not(:empty)").waitFor({ timeout: 2000 });
+    assert.match(await panel.locator(".language-warning").textContent(), /read/i);
+    await page.evaluate(() => __locale("ru-RU"));
+    await panel.getByRole("searchbox", { name: "Поиск изменений" }).waitFor();
+    assert.match(await panel.locator(".language-warning").textContent(), /прочитать/);
+    for (const locale of ["ru", "Ru-RU", "ru-!", "russian", "en-AU"]) {
+      await page.evaluate((locale) => __locale(locale), locale);
+      await panel
+        .locator(`html[lang="${["ru", "Ru-RU"].includes(locale) ? "ru" : "en"}"]`)
+        .waitFor();
+    }
+    assert.equal(await page.evaluate(() => __storageCalls.length), 1);
+  });
+});
+
+test("viewer language retained board preserves search caret retry identity counts and reads", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    const search = panel.getByRole("searchbox");
+    await search.fill("first");
+    await search.evaluate((node) => {
+      window.savedSearch = node;
+      node.setSelectionRange(1, 3);
+    });
+    const reads = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru-RU"));
+    await panel.getByRole("searchbox", { name: "Поиск изменений" }).waitFor();
+    assert.deepEqual(
+      await search.evaluate((node) => [
+        node === window.savedSearch,
+        node.value,
+        node.selectionStart,
+        node.selectionEnd,
+        node === document.activeElement,
+      ]),
+      [true, "first", 1, 3, true],
+    );
+    await panel.getByRole("button", { name: "Очистить поиск", exact: true }).click();
+    assert.equal(await search.inputValue(), "");
+    await page.evaluate(() => __theme("light"));
+    assert.equal(
+      await panel
+        .getByRole("button", { name: "Очистить поиск", exact: true, includeHidden: true })
+        .count(),
+      1,
+    );
+    assert.equal(await page.evaluate(() => __requests.length), reads);
+    await page.evaluate(() => __failNextListing());
+    await panel.getByRole("button", { name: "Обновить", exact: true }).click();
+    const retry = panel.locator(".board-notices button");
+    await retry.waitFor();
+    await retry.focus();
+    await retry.evaluate((node) => (window.savedRetry = node));
+    const failedReads = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("en-AU"));
+    await panel.getByRole("button", { name: "Retry", exact: true }).waitFor();
+    assert.deepEqual(
+      await retry.evaluate((node) => [node === window.savedRetry, node === document.activeElement]),
+      [true, true],
+    );
+    assert.equal(
+      await panel.locator(".board-notices .notice.error > span").first().textContent(),
+      "Cannot check listing",
+    );
+    assert.equal(await page.evaluate(() => __requests.length), failedReads);
+    for (const count of [0, 1, 2, 5, 11, 21, 22]) {
+      await page.evaluate((count) => __counts(count), count);
+      await panel.locator(".toolbar .refresh-control button").click();
+      await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+      await page.evaluate(() => __locale("ru"));
+      await panel.locator('html[lang="ru"]').waitFor();
+      const noun = count === 1 || count === 21 ? "задачи" : "задач";
+      assert.match(
+        await panel.locator(".board-tally").textContent(),
+        new RegExp(`0 из ${count} ${noun}`),
+      );
+      await page.evaluate(() => __locale("en"));
+      await panel.locator('html[lang="en"]').waitFor();
+      assert.match(
+        await panel.locator(".board-tally").textContent(),
+        new RegExp(`0 of ${count} tasks complete`),
+      );
+    }
+  });
+});
+
+test("viewer language preference ignores disposed read and write responses without resurrecting UI", async () => {
+  await withPanel(async (browser, url) => {
+    for (const op of ["get", "set"]) {
+      const page = await browser.newPage();
+      await page.goto(url + (op === "get" ? "?hold-storage=get&language=%22ru%22" : ""));
+      const panel = page.frameLocator("iframe");
+      await panel.locator(".language-row button").waitFor({ timeout: 2000 });
+      if (op === "set") {
+        await panel.locator(".language-row button:not(:disabled)").waitFor();
+        await page.evaluate(() => __holdStorage("set"));
+        await panel.locator(".language-row button").click();
+        await panel.getByRole("option", { name: "Русский", exact: true }).click();
+      }
+      await panel.locator("body").evaluate(() => window.dispatchEvent(new Event("pagehide")));
+      await page.evaluate(() => __releaseStorage());
+      assert.equal(await panel.locator(".language-row").count(), 0);
+      assert.equal(await panel.locator("html").getAttribute("lang"), "en");
+      await page.evaluate(() => __remount());
+      await panel.getByRole("searchbox", { name: "Поиск изменений" }).waitFor();
+      assert.equal(
+        await page.evaluate(() => __storageCalls.filter((c) => c.op === "get").length),
+        2,
+      );
+      await page.close();
+    }
+  });
+});
+
+test("viewer language retained board count forms cover artifacts and changes in both languages", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    for (const count of [0, 1, 2, 5, 11, 21, 22]) {
+      await page.evaluate((count) => __artifactCount(count), count);
+      await panel.locator(".toolbar .refresh-control button").click();
+      await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+      for (const locale of ["ru", "en"]) {
+        await page.evaluate((locale) => __locale(locale), locale);
+        await panel.locator(`html[lang="${locale}"]`).waitFor();
+        const noun = count === 1 || count === 21 ? "артефакта" : "артефактов";
+        assert.equal(
+          await panel
+            .locator(".change-card")
+            .filter({ has: panel.getByRole("button", { name: "first-change", exact: true }) })
+            .locator(".progress-label")
+            .textContent(),
+          locale === "ru" ? `${count} из ${count} ${noun}` : `${count} of ${count} artefacts`,
+        );
+      }
+    }
+    for (const count of [0, 1, 2, 5, 11, 21, 22]) {
+      await page.evaluate((count) => __changeCount(count), count);
+      await panel.locator(".toolbar .refresh-control button").click();
+      await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+      for (const locale of ["ru", "en"]) {
+        await page.evaluate((locale) => __locale(locale), locale);
+        await panel.locator(`html[lang="${locale}"]`).waitFor();
+        const noun =
+          count === 1 || count === 21
+            ? "изменение"
+            : count === 2 || count === 22
+              ? "изменения"
+              : "изменений";
+        assert.match(
+          await panel.locator(".board-tally").textContent(),
+          new RegExp(`^${count} ${locale === "ru" ? noun : "changes"} ·`),
+        );
+      }
+    }
+  });
+});
+
+test("viewer language retained board keeps scroll help focus and language available without project", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage({ viewport: { width: 320, height: 500 } });
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    await page.evaluate(() => {
+      for (let n = 0; n < 40; n++) __recreate("long-change-" + n);
+    });
+    await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    await panel.locator("body").evaluate(() => window.scrollTo(0, 400));
+    const scroll = await panel.locator("body").evaluate(() => window.scrollY);
+    const reads = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("ru"));
+    await panel.locator('html[lang="ru"]').waitFor();
+    assert.equal(await panel.locator("body").evaluate(() => window.scrollY), scroll);
+    assert.equal(await page.evaluate(() => __requests.length), reads);
+    const help = panel.getByRole("button", { name: "Краткое руководство OpenSpec", exact: true });
+    await help.focus();
+    await page.evaluate(() => __locale("en"));
+    await panel.getByRole("button", { name: "OpenSpec quickstart", exact: true }).waitFor();
+    assert.equal(await help.count(), 0);
+    assert.equal(
+      await panel
+        .getByRole("button", { name: "OpenSpec quickstart", exact: true })
+        .evaluate((node) => node === document.activeElement),
+      true,
+    );
+    await page.evaluate(() => {
+      __directory(null);
+      __locale("ru");
+    });
+    await panel.getByText("Проект не выбран", { exact: true }).waitFor();
+    await panel.locator(".language-row button").click();
+    await panel.getByRole("option", { name: "English", exact: true }).click();
+    await panel.getByText("No project selected", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => __requests.length), reads);
+  });
+});
+
+test("viewer language retained board localizes pending empty stale unavailable and restores navigation focus", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url + "?hold-summary");
+    const panel = page.frameLocator("iframe");
+    await panel.getByText("Loading…").first().waitFor();
+    await page.evaluate(() => __locale("ru"));
+    await panel.getByText("Загрузка…").first().waitFor();
+    await page.evaluate(() => __releaseSummaries());
+    const first = panel.getByRole("button", { name: "first-change", exact: true });
+    await first.waitFor();
+    await panel.getByRole("searchbox").fill("no-results");
+    await panel.getByText("Подходящих изменений нет").first().waitFor();
+    await panel.getByRole("searchbox").press("Escape");
+    await panel.getByText("Здесь пока нет изменений").first().waitFor();
+    await page.evaluate(() => __failSummary());
+    await panel.getByRole("button", { name: "Обновить", exact: true }).click();
+    await panel
+      .getByText("first-change: данные устарели; актуальная сводка недоступна.", { exact: true })
+      .waitFor();
+    const retry = panel.getByRole("button", { name: "Повторить", exact: true });
+    await retry.focus();
+    await retry.evaluate((node) => (window.failureRetry = node));
+    const reads = await page.evaluate(() => __requests.length);
+    await page.evaluate(() => __locale("en"));
+    await panel
+      .getByText("first-change is stale; latest summary unavailable.", { exact: true })
+      .waitFor();
+    assert.equal(
+      await panel
+        .getByRole("button", { name: "Retry", exact: true })
+        .evaluate((node) => node === window.failureRetry && node === document.activeElement),
+      true,
+    );
+    assert.equal(await page.evaluate(() => __requests.length), reads);
+    await page.evaluate(() => {
+      __failSummary("CHANGE_UNAVAILABLE");
+      __locale("ru");
+    });
+    await panel.getByRole("button", { name: "Обновить", exact: true }).click();
+    await panel.getByText("first-change больше недоступно.", { exact: true }).waitFor();
+    await panel.getByRole("button", { name: "Обновить", exact: true }).click();
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    await first.click();
+    await panel.getByRole("button", { name: "Назад к изменениям", exact: true }).click();
+    assert.equal(await first.evaluate((node) => node === document.activeElement), true);
+    await first.click();
+    await panel.getByRole("button", { name: "Удалить изменение", exact: true }).click();
+    await panel.getByRole("dialog").getByRole("button", { name: "Удалить", exact: true }).click();
+    await panel.getByRole("searchbox", { name: "Поиск изменений" }).waitFor();
+    assert.equal(
+      await panel.getByRole("searchbox").evaluate((node) => node === document.activeElement),
+      true,
+    );
+  });
+});
+
+test("board toolbar contained across intermediate widths and themes", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    await page.evaluate(() => __rename("second-change", "long-change-name-".repeat(12)));
+    await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    const reads = await page.evaluate(() => __requests.length);
+    for (const locale of ["en", "ru"]) {
+      await page.evaluate((locale) => __locale(locale), locale);
+      await panel.locator(`html[lang="${locale}"]`).waitFor();
+      for (const mode of ["light", "dark"]) {
+        await page.evaluate((mode) => window.__theme(mode), mode);
+        for (const width of [320, 560, 561, 580, 600, 1076]) {
+          await page.setViewportSize({ width, height: 800 });
+          for (const query of ["", "first-change"]) {
+            await panel.getByRole("searchbox").fill(query);
+            const bounds = await panel.locator(".board-search").evaluate((root) => {
+              const box = root.getBoundingClientRect();
+              const input = root.querySelector("input").getBoundingClientRect();
+              const actions = root.nextElementSibling.getBoundingClientRect();
+              return {
+                contained: [
+                  root.querySelector("input"),
+                  root.querySelector(".oc-sdk-search-icon"),
+                  root.querySelector(".oc-sdk-search-clear"),
+                ]
+                  .filter((child) => child.checkVisibility())
+                  .map((child) => child.getBoundingClientRect())
+                  .every((child) => child.left >= box.left - 1 && child.right <= box.right + 1),
+                overlap:
+                  input.left < actions.right &&
+                  input.right > actions.left &&
+                  input.top < actions.bottom &&
+                  input.bottom > actions.top,
+                overflow: document.documentElement.scrollWidth > innerWidth,
+              };
+            });
+            assert.deepEqual(
+              bounds,
+              { contained: true, overlap: false, overflow: false },
+              `${locale}/${mode} ${width}px ${JSON.stringify(query)}`,
+            );
+          }
+          await panel.getByRole("searchbox").fill("first-change");
+          await panel
+            .getByRole("button", {
+              name: locale === "ru" ? "Очистить поиск" : "Clear search",
+              exact: true,
+            })
+            .click({ timeout: 2000 });
+          assert.equal(await panel.getByRole("searchbox").inputValue(), "");
+          assert.equal(
+            await panel.getByRole("searchbox").evaluate((node) => node === document.activeElement),
+            true,
+          );
+          await panel.getByRole("searchbox").fill("first-change");
+          await panel.getByRole("searchbox").press("Escape");
+          assert.equal(await panel.getByRole("searchbox").inputValue(), "");
+        }
+      }
+    }
+    assert.equal(await page.evaluate(() => __requests.length), reads);
+  });
+});
+
+test("workflow dropdown uses neutral SDK styling and a decorative arrow", async () => {
+  await withPanel(async (browser, url) => {
+    const page = await browser.newPage();
+    await page.goto(url);
+    const panel = page.frameLocator("iframe");
+    await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => window.__theme(mode), mode);
+      for (const width of [320, 1076]) {
+        await page.setViewportSize({ width, height: 800 });
+        for (const surface of ["board", "card", "detail"]) {
+          if (surface === "detail") {
+            await panel.getByRole("button", { name: "first-change", exact: true }).click();
+            await panel.locator(".detail-footer").waitFor();
+          }
+          const scope = panel
+            .locator(
+              surface === "board"
+                ? ".heading-actions"
+                : surface === "card"
+                  ? ".change-card"
+                  : ".detail-footer",
+            )
+            .first();
+          const button = scope.locator(".workflow-menu > .oc-sdk-menu > button");
+          await button.evaluate(async (node) => {
+            await Promise.all(node.getAnimations().map((animation) => animation.finished));
+          });
+          assert.equal(await button.getAttribute("data-variant"), "secondary");
+          assert.equal(await button.getAttribute("aria-haspopup"), "menu");
+          assert.notEqual(await button.getAttribute("aria-expanded"), "true");
+          const style = await button.evaluate((node) => {
+            const css = getComputedStyle(node);
+            const reference = getComputedStyle(
+              document.querySelector(
+                '.heading-actions button[data-variant="secondary"]:not([aria-haspopup])',
+              ),
+            );
+            const arrow = getComputedStyle(node, "::after");
+            return {
+              neutral:
+                css.backgroundColor === reference.backgroundColor &&
+                css.color === reference.color &&
+                css.borderColor === reference.borderColor,
+              arrow:
+                arrow.content === '""' &&
+                parseFloat(arrow.width) > 0 &&
+                arrow.borderRightStyle === "solid" &&
+                arrow.borderBottomStyle === "solid",
+            };
+          });
+          assert.deepEqual(style, { neutral: true, arrow: true }, `${mode} ${surface}`);
+          await button.hover();
+          await button.evaluate(async (node) => {
+            await Promise.all(node.getAnimations().map((animation) => animation.finished));
+          });
+          assert.notEqual(
+            await button.evaluate((node) => getComputedStyle(node).backgroundImage),
+            "none",
+          );
+          await page.keyboard.press("Tab");
+          await button.focus();
+          assert.equal(await button.evaluate((node) => node.matches(":focus-visible")), true);
+          assert.notEqual(
+            await button.evaluate((node) => getComputedStyle(node).boxShadow),
+            "none",
+          );
+          await button.click();
+          await panel.getByRole("menu").waitFor();
+          await page.keyboard.press("End");
+          const finalEntry = await panel.getByRole("menu").evaluate((menu) => {
+            const row = document.getElementById(menu.getAttribute("aria-activedescendant"));
+            const box = row.getBoundingClientRect();
+            const popup = menu.getBoundingClientRect();
+            return {
+              contained: box.top >= popup.top - 1 && box.bottom <= popup.bottom + 1,
+              horizontal: box.right <= innerWidth,
+            };
+          });
+          assert.deepEqual(finalEntry, { contained: true, horizontal: true });
+          await page.keyboard.press("Escape");
+          if (surface === "detail")
+            await panel.getByRole("button", { name: "Back to changes", exact: true }).click();
+        }
+      }
+      await panel.getByRole("button", { name: "first-change", exact: true }).click();
+      await page.evaluate(() => __failSummary("CHANGE_UNAVAILABLE"));
+      await panel.locator(".detail-toolbar .refresh-control button").click();
+      const disabledDetail = panel.locator(".detail-footer .workflow-menu button");
+      await disabledDetail.locator(":scope:disabled").waitFor();
+      assert.ok(
+        await disabledDetail.evaluate((node) => Number(getComputedStyle(node).opacity) < 1),
+      );
+      await panel.getByRole("button", { name: "Back to changes", exact: true }).click();
+      const disabledCard = panel
+        .locator(".change-card")
+        .filter({ hasText: "first-change" })
+        .locator(".workflow-menu button");
+      assert.equal(await disabledCard.isDisabled(), true);
+      assert.ok(await disabledCard.evaluate((node) => Number(getComputedStyle(node).opacity) < 1));
+      await page.evaluate(() => __directory(null));
+      const disabledBoard = panel.locator(".heading-actions .workflow-menu button");
+      await disabledBoard.locator(":scope:disabled").waitFor();
+      assert.ok(await disabledBoard.evaluate((node) => Number(getComputedStyle(node).opacity) < 1));
+      await page.evaluate((value) => __directory(value), directory);
+      await panel.locator(".toolbar .refresh-control button:not(:disabled)").waitFor();
+    }
+  });
+});
 
 test("workflow menu labels use sentence case without changing change names", async () => {
   await withPanel(async (browser, url) => {
@@ -647,7 +2790,15 @@ test("workflow menu descriptions exclusive describe every pointer and keyboard e
           const entries = surface === "global" ? global : change;
           const before = await page.evaluate(() => __requests.length);
           for (const input of ["keyboard", "pointer"]) {
+            await page.mouse.move(0, 0);
+            await trigger.scrollIntoViewIfNeeded();
             await trigger.focus();
+            await trigger.evaluate(
+              () =>
+                new Promise((resolve) =>
+                  requestAnimationFrame(() => requestAnimationFrame(resolve)),
+                ),
+            );
             await page.keyboard.press("Enter");
             const menu = panel.getByRole("menu");
             await menu.waitFor();
@@ -959,7 +3110,7 @@ test("workflow menu descriptions follow stages, preserve other descriptions and 
     await page.evaluate(() => __readiness("pending"));
     await refresh.click();
     const card = panel.locator(".change-card").filter({ hasText: "first-change" });
-    const primary = card.getByRole("button", { name: "Continue artifacts", exact: true });
+    const primary = card.getByRole("button", { name: "Plan", exact: true });
     await primary.waitFor();
     await primary.evaluate((button) => {
       const note = document.createElement("span");
@@ -1206,11 +3357,22 @@ test("workflow menu accessibility keyboard activation, navigation and reachable 
             // A new session before each native click must be captured at activation, not mount.
             await page.evaluate((id) => __session(id), `${width}-${mode}-${surface}-${key}`);
             const before = await page.evaluate(() => __requests.length);
+            await trigger.scrollIntoViewIfNeeded();
             await trigger.focus();
+            await trigger.evaluate(
+              () =>
+                new Promise((resolve) =>
+                  requestAnimationFrame(() => requestAnimationFrame(resolve)),
+                ),
+            );
             await page.keyboard.press(key);
             const menu = panel.getByRole("menu");
             await menu.waitFor();
-            assert.equal(await trigger.getAttribute("aria-expanded"), "true");
+            assert.equal(
+              await trigger.getAttribute("aria-expanded"),
+              "true",
+              `${width}/${mode}/${surface}/${key}`,
+            );
             assert.equal(await menu.evaluate((node) => node === document.activeElement), true);
             assert.deepEqual(await menu.locator(".oc-sdk-option-label").allTextContents(), labels);
             assert.equal(await page.evaluate(() => __requests.length), before);
@@ -1668,11 +3830,18 @@ test("presentation page fills short boards and preserves long board and detail s
         outerHeight: document.scrollingElement.scrollHeight,
         viewportHeight: innerHeight,
         detailHeight: document.querySelector(".detail").getBoundingClientRect().height,
+        languageHeight:
+          document.querySelector(".language-row").getBoundingClientRect().height +
+          parseFloat(getComputedStyle(document.querySelector(".language-row")).marginBottom),
       };
     });
     assert.equal(scrolling.contentScrolled, true);
     assert.equal(scrolling.outerHeight, scrolling.viewportHeight);
-    assert.equal(scrolling.detailHeight, scrolling.viewportHeight);
+    assert.ok(
+      Math.abs(scrolling.detailHeight + scrolling.languageHeight - scrolling.viewportHeight) <
+        0.001,
+      "Detail and language row fill the viewport within CSS subpixel precision",
+    );
     await page.close();
   });
 });
@@ -4421,7 +6590,7 @@ test("planning, ready and complete actions prepare the appropriate unsent compos
     await panel
       .locator(".change-card")
       .filter({ hasText: "first-change" })
-      .getByRole("button", { name: "Continue artifacts" })
+      .getByRole("button", { name: "Plan" })
       .click();
     await page.waitForFunction(() => __draft().includes("openspec-continue-change"));
     assert.match(
@@ -4439,7 +6608,7 @@ test("planning, ready and complete actions prepare the appropriate unsent compos
   });
 });
 
-test("workflow menu quick Continue artifacts preserves goals on board and detail without extra effects", async () => {
+test("planning label preserves Continue goals on board and detail without extra effects", async () => {
   await withPanel(async (browser, url) => {
     const page = await browser.newPage();
     await page.goto(url);
@@ -4467,9 +6636,7 @@ test("workflow menu quick Continue artifacts preserves goals on board and detail
             ? panel.locator(".change-card").filter({ hasText: "first-change" })
             : panel.locator(".detail-footer");
         const before = await page.evaluate(() => __requests.length);
-        await actions
-          .getByRole("button", { name: "Continue artifacts", exact: true })
-          .click({ timeout: 2000 });
+        await actions.getByRole("button", { name: "Plan", exact: true }).click({ timeout: 2000 });
         await page.waitForFunction(
           (before) => __requests.slice(before).some((r) => r.path === "compose"),
           before,
@@ -5706,7 +7873,7 @@ test("long custom tabs scroll within a 320 px panel without hiding fallback Task
     const card = panel.locator(".change-card").filter({ hasText: "first-change" });
     assert.deepEqual(await card.locator(".card-actions button:visible").allTextContents(), [
       "Explore",
-      "Continue artifacts",
+      "Plan",
       "Workflows",
     ]);
     await panel.getByRole("button", { name: "first-change" }).click();
@@ -5889,7 +8056,7 @@ test("long goals remain fully scrollable with reachable detail controls", async 
   });
 });
 
-test("Planning detail explores the same goal with secondary action before Continue artifacts", async () => {
+test("Planning detail explores the same goal with secondary action before Plan", async () => {
   await withPanel(async (browser, url) => {
     const page = await browser.newPage({ viewport: { width: 320, height: 700 } });
     await page.goto(url);
@@ -5901,7 +8068,7 @@ test("Planning detail explores the same goal with secondary action before Contin
     const footer = panel.locator(".detail-footer");
     assert.deepEqual(await footer.locator("button:visible").allTextContents(), [
       "Explore",
-      "Continue artifacts",
+      "Plan",
       "Workflows",
     ]);
     await footer.getByRole("button", { name: "Explore" }).click();

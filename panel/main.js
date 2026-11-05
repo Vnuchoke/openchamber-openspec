@@ -1504,6 +1504,163 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     };
   };
 
+  // node_modules/@openchamber/sdk/dist/ui/select.js
+  var filterSelectOptions = (options, query) => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return [...options];
+    }
+    return options.filter((option) => option.label.toLowerCase().includes(needle) || option.id.toLowerCase().includes(needle));
+  };
+  var selectCount = 0;
+  var mountSelect = (root2, initial) => {
+    ensureStyle(UI_CSS);
+    let props = initial;
+    const uid = `oc-sdk-select-${selectCount += 1}`;
+    const wrap = el("div", "oc-sdk oc-sdk-select");
+    const caption = el("span", "oc-sdk-field-label");
+    caption.id = `${uid}-label`;
+    const trigger = button("oc-sdk-trigger");
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-labelledby", caption.id);
+    const value = el("span", "oc-sdk-trigger-value");
+    trigger.append(value, icon("chevron", 14, "oc-sdk-trigger-chevron"));
+    wrap.append(caption, trigger);
+    root2.append(wrap);
+    let query = "";
+    let activeId = null;
+    let closePopup = null;
+    const popup = el("div", "oc-sdk oc-sdk-popup");
+    const searchSlot = el("div", "oc-sdk-popup-search");
+    const search = el("input", "oc-sdk-input");
+    search.type = "text";
+    search.autocomplete = "off";
+    searchSlot.append(search);
+    const listbox = el("div");
+    listbox.setAttribute("role", "listbox");
+    listbox.tabIndex = -1;
+    popup.append(listbox);
+    const visible = () => filterSelectOptions(props.options, props.searchable ? query : "");
+    const focusOwner = () => props.searchable ? search : listbox;
+    const setActive = (id) => {
+      activeId = id;
+      highlightOption(listbox, focusOwner(), uid, id);
+    };
+    const paintOptions = () => {
+      clearNode(listbox);
+      const options = visible();
+      if (options.length === 0) {
+        const empty = el("div", "oc-sdk-popup-empty");
+        empty.textContent = "No matches";
+        listbox.append(empty);
+      }
+      for (const option of options) {
+        listbox.append(createOption(uid, "option", { ...option, selected: option.id === props.value }, {
+          hover: () => setActive(option.id),
+          pick: () => pick(option.id)
+        }));
+      }
+      setActive(options.some((option) => option.id === activeId) ? activeId : options[0]?.id ?? null);
+    };
+    const close = () => {
+      const dispose = closePopup;
+      closePopup = null;
+      dispose?.();
+      query = "";
+      search.value = "";
+      trigger.setAttribute("aria-expanded", "false");
+    };
+    const open = () => {
+      if (closePopup || props.disabled) {
+        return;
+      }
+      activeId = props.value;
+      search.placeholder = props.searchPlaceholder ?? "Search";
+      if (props.searchable)
+        popup.prepend(searchSlot);
+      else
+        searchSlot.remove();
+      paintOptions();
+      closePopup = openPopup(wrap, trigger, popup, close);
+      trigger.setAttribute("aria-expanded", "true");
+      focusOwner().focus();
+    };
+    const pick = (id) => {
+      close();
+      trigger.focus();
+      if (id !== props.value)
+        props.onChange(id);
+    };
+    const onTriggerClick = () => {
+      if (closePopup)
+        close();
+      else
+        open();
+    };
+    const onTriggerKey = (event) => {
+      if (!closePopup && navigationKey(event)) {
+        event.preventDefault();
+        open();
+      }
+    };
+    const onPopupKey = (event) => {
+      const step = navigationKey(event);
+      if (step) {
+        event.preventDefault();
+        setActive(moveListSelection(visible(), activeId, step));
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        if (activeId)
+          pick(activeId);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        trigger.focus();
+      } else if (props.searchable && event.target !== search && event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+        search.focus();
+      }
+    };
+    const onSearchInput = () => {
+      query = search.value;
+      paintOptions();
+    };
+    const onFocusOut = (event) => {
+      if (closePopup && !(event.relatedTarget instanceof Node && wrap.contains(event.relatedTarget)))
+        close();
+    };
+    const paint = () => {
+      setText(caption, props.label);
+      caption.hidden = !props.label;
+      const current = props.options.find((option) => option.id === props.value);
+      setText(value, current?.label ?? props.placeholder ?? "Select");
+      value.dataset.empty = current ? "false" : "true";
+      trigger.disabled = Boolean(props.disabled);
+      if (closePopup)
+        paintOptions();
+    };
+    trigger.addEventListener("click", onTriggerClick);
+    trigger.addEventListener("keydown", onTriggerKey);
+    popup.addEventListener("keydown", onPopupKey);
+    search.addEventListener("input", onSearchInput);
+    wrap.addEventListener("focusout", onFocusOut);
+    paint();
+    return {
+      update: (next) => {
+        props = { ...props, ...next };
+        paint();
+      },
+      dispose: () => {
+        close();
+        trigger.removeEventListener("click", onTriggerClick);
+        trigger.removeEventListener("keydown", onTriggerKey);
+        popup.removeEventListener("keydown", onPopupKey);
+        search.removeEventListener("input", onSearchInput);
+        wrap.removeEventListener("focusout", onFocusOut);
+        wrap.remove();
+      }
+    };
+  };
+
   // node_modules/@openchamber/sdk/dist/ui/tabs.js
   var mountTabs = (root2, initial) => {
     ensureStyle(UI_CSS);
@@ -1738,6 +1895,656 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     };
   };
 
+  // src/panel/archive-prompt.ts
+  var archiveAllPrompts = {
+    en: `Archive all completed OpenSpec changes in this session's project/worktree.
+
+Run openspec list --json for a fresh active-change listing and resolve its OpenSpec planning context, honouring declared stores and the selected CLI root. Inspect each change with openspec status --change "<name>" --json and current CLI-reported task counts. Only changes with every applicable planning artefact done or explicitly skipped, a positive task total, and all tasks complete qualify. Skip unfinished, zero-task, unavailable or unreadable changes. Never use an incomplete-work warning override or infer successful verification from a Complete card or task counts.
+
+Use your skill tool to load and invoke the openspec-archive-change skill for each qualifying named change sequentially. Recheck completion before each archive and assess spec sync against the current main specs after any preceding archive. Preserve the skill's prerequisites, sync assessment, user choices and blockers; ask its required questions rather than treating this bulk request as permission to bypass them. Do not implement unfinished work or automatically resolve blockers.
+
+Report archived, skipped and blocked changes with reasons. If none qualify, make no OpenSpec mutations and report that outcome.`,
+    ru: `\u0410\u0440\u0445\u0438\u0432\u0438\u0440\u0443\u0439 \u0432\u0441\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F OpenSpec \u0432 \u043F\u0440\u043E\u0435\u043A\u0442\u0435/\u0440\u0430\u0431\u043E\u0447\u0435\u043C \u0434\u0435\u0440\u0435\u0432\u0435 \u044D\u0442\u043E\u0439 \u0441\u0435\u0441\u0441\u0438\u0438.
+
+\u0412\u044B\u043F\u043E\u043B\u043D\u0438 openspec list --json, \u0447\u0442\u043E\u0431\u044B \u043F\u043E\u043B\u0443\u0447\u0438\u0442\u044C \u0441\u0432\u0435\u0436\u0438\u0439 \u0441\u043F\u0438\u0441\u043E\u043A \u0430\u043A\u0442\u0438\u0432\u043D\u044B\u0445 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439, \u0438 \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0438 \u0435\u0433\u043E \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F OpenSpec, \u0443\u0447\u0438\u0442\u044B\u0432\u0430\u044F \u043E\u0431\u044A\u044F\u0432\u043B\u0435\u043D\u043D\u044B\u0435 \u0445\u0440\u0430\u043D\u0438\u043B\u0438\u0449\u0430 \u0438 \u0432\u044B\u0431\u0440\u0430\u043D\u043D\u044B\u0439 \u043A\u043E\u0440\u0435\u043D\u044C CLI. \u0418\u0437\u0443\u0447\u0438 \u043A\u0430\u0436\u0434\u043E\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0441 \u043F\u043E\u043C\u043E\u0449\u044C\u044E openspec status --change "<name>" --json \u0438 \u0430\u043A\u0442\u0443\u0430\u043B\u044C\u043D\u044B\u0445 \u0441\u0447\u0451\u0442\u0447\u0438\u043A\u043E\u0432 \u0437\u0430\u0434\u0430\u0447, \u043F\u043E\u043B\u0443\u0447\u0435\u043D\u043D\u044B\u0445 \u043E\u0442 CLI. \u041F\u043E\u0434\u0445\u043E\u0434\u044F\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F, \u0443 \u043A\u043E\u0442\u043E\u0440\u044B\u0445 \u043A\u0430\u0436\u0434\u044B\u0439 \u043F\u0440\u0438\u043C\u0435\u043D\u0438\u043C\u044B\u0439 \u043F\u043B\u0430\u043D\u043E\u0432\u044B\u0439 \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D (done) \u0438\u043B\u0438 \u044F\u0432\u043D\u043E \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D (skipped), \u0441 \u043F\u043E\u043B\u043E\u0436\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u043C \u043E\u0431\u0449\u0438\u043C \u0447\u0438\u0441\u043B\u043E\u043C \u0437\u0430\u0434\u0430\u0447 \u0438 \u0432\u0441\u0435\u043C\u0438 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u043D\u044B\u043C\u0438 \u0437\u0430\u0434\u0430\u0447\u0430\u043C\u0438. \u041F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u0439 \u043D\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0435, \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B\u0435, \u043D\u0435\u0447\u0438\u0442\u0430\u0435\u043C\u044B\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0438 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0431\u0435\u0437 \u0437\u0430\u0434\u0430\u0447. \u041D\u0435 \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0439 \u043E\u0431\u0445\u043E\u0434 \u043F\u0440\u0435\u0434\u0443\u043F\u0440\u0435\u0436\u0434\u0435\u043D\u0438\u044F \u043E \u043D\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u043E\u0439 \u0440\u0430\u0431\u043E\u0442\u0435 \u0438 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u0439 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 \xAB\u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043D\u043E\xBB \u0438\u043B\u0438 \u0441\u0447\u0451\u0442\u0447\u0438\u043A\u0438 \u0437\u0430\u0434\u0430\u0447 \u0434\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E\u043C \u0443\u0441\u043F\u0435\u0448\u043D\u043E\u0439 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438.
+
+\u0418\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0439 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u043D\u0430\u0432\u044B\u043A\u043E\u0432, \u0447\u0442\u043E\u0431\u044B \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0438 \u0432\u044B\u0437\u0432\u0430\u0442\u044C \u043D\u0430\u0432\u044B\u043A openspec-archive-change \u043F\u043E\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u0442\u0435\u043B\u044C\u043D\u043E \u0434\u043B\u044F \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u043F\u043E\u0434\u0445\u043E\u0434\u044F\u0449\u0435\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u043F\u043E \u0438\u043C\u0435\u043D\u0438. \u041F\u043E\u0432\u0442\u043E\u0440\u043D\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0439 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u043E\u0441\u0442\u044C \u043F\u0435\u0440\u0435\u0434 \u043A\u0430\u0436\u0434\u043E\u0439 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0435\u0439 \u0438 \u043E\u0446\u0435\u043D\u0438\u0432\u0430\u0439 \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u044E \u0441\u043F\u0435\u0446\u0438\u0444\u0438\u043A\u0430\u0446\u0438\u0439 \u0441 \u0430\u043A\u0442\u0443\u0430\u043B\u044C\u043D\u044B\u043C\u0438 \u043E\u0441\u043D\u043E\u0432\u043D\u044B\u043C\u0438 \u0441\u043F\u0435\u0446\u0438\u0444\u0438\u043A\u0430\u0446\u0438\u044F\u043C\u0438 \u043F\u043E\u0441\u043B\u0435 \u043A\u0430\u0436\u0434\u043E\u0439 \u043F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0435\u0439 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438. \u0421\u043E\u0445\u0440\u0430\u043D\u0438 \u043F\u0440\u0435\u0434\u0432\u0430\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u0443\u0441\u043B\u043E\u0432\u0438\u044F \u043D\u0430\u0432\u044B\u043A\u0430, \u043E\u0446\u0435\u043D\u043A\u0443 \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u0438, \u0432\u044B\u0431\u043E\u0440 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F \u0438 \u0431\u043B\u043E\u043A\u0438\u0440\u0443\u044E\u0449\u0438\u0435 \u043E\u0431\u0441\u0442\u043E\u044F\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u0430; \u0437\u0430\u0434\u0430\u0432\u0430\u0439 \u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u0432\u043E\u043F\u0440\u043E\u0441\u044B \u043D\u0430\u0432\u044B\u043A\u0430, \u0430 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u0439 \u044D\u0442\u043E\u0442 \u043F\u0430\u043A\u0435\u0442\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043D\u0438\u0435\u043C \u0438\u0445 \u043E\u0431\u043E\u0439\u0442\u0438. \u041D\u0435 \u0440\u0435\u0430\u043B\u0438\u0437\u0443\u0439 \u043D\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u0443\u044E \u0440\u0430\u0431\u043E\u0442\u0443 \u0438 \u043D\u0435 \u0443\u0441\u0442\u0440\u0430\u043D\u044F\u0439 \u0431\u043B\u043E\u043A\u0438\u0440\u0443\u044E\u0449\u0438\u0435 \u043E\u0431\u0441\u0442\u043E\u044F\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u0430 \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438.
+
+\u041F\u0435\u0440\u0435\u0447\u0438\u0441\u043B\u0438 \u0430\u0440\u0445\u0438\u0432\u0438\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0435, \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u043D\u044B\u0435 \u0438 \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0441 \u043F\u0440\u0438\u0447\u0438\u043D\u0430\u043C\u0438. \u0415\u0441\u043B\u0438 \u043D\u0438 \u043E\u0434\u043D\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u043D\u0435 \u043F\u043E\u0434\u0445\u043E\u0434\u0438\u0442, \u043D\u0435 \u0432\u043D\u043E\u0441\u0438 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439 \u0432 OpenSpec \u0438 \u0441\u043E\u043E\u0431\u0449\u0438 \u043E\u0431 \u044D\u0442\u043E\u043C \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0435.`
+  };
+
+  // src/panel/workflow.ts
+  var globalWorkflows = [
+    {
+      id: "propose",
+      label: "Propose change",
+      skill: "openspec-propose",
+      description: "Prepare an unsent prompt to define a new change and its planning artifacts."
+    },
+    {
+      id: "explore",
+      label: "Explore ideas",
+      skill: "openspec-explore",
+      description: "Prepare an unsent prompt to investigate ideas and trade-offs without file changes."
+    },
+    {
+      id: "new",
+      label: "New change",
+      skill: "openspec-new-change",
+      description: "Prepare an unsent prompt to start a new change step by step."
+    },
+    {
+      id: "ff",
+      label: "Fast-forward",
+      skill: "openspec-ff-change",
+      description: "Prepare an unsent prompt to create all planning artifacts for a new change."
+    },
+    {
+      id: "bulk-archive",
+      label: "Bulk archive",
+      skill: "openspec-bulk-archive-change",
+      description: "Prepare an unsent prompt to select changes, assess conflicts and confirm batch archiving."
+    },
+    {
+      id: "onboard",
+      label: "Onboard",
+      skill: "openspec-onboard",
+      description: "Prepare an unsent prompt for a guided full change cycle, with setup and task questions."
+    }
+  ];
+  function globalWorkflowPrompt(workflow, text2) {
+    const { skill } = globalWorkflows.find(({ id }) => id === workflow);
+    const prompts = text2.prompts;
+    const instruction = prompts.globalGuidance[workflow === "bulk-archive" || workflow === "onboard" || workflow === "explore" ? workflow : "creation"];
+    return `${prompts.globalIntroduction(skill)}
+
+${instruction} ${prompts.globalSafety}`;
+  }
+  var changeWorkflows = [
+    {
+      id: "continue",
+      label: "Continue change",
+      skill: "openspec-continue-change",
+      description: "Prepare an unsent prompt for at most one next planning artifact, not implementation."
+    },
+    {
+      id: "apply",
+      label: "Apply tasks",
+      skill: "openspec-apply-change",
+      description: "Prepare an unsent current-chat prompt to implement and verify remaining tasks."
+    },
+    {
+      id: "update",
+      label: "Update change",
+      skill: "openspec-update-change",
+      description: "Prepare an unsent prompt to revise planning artifacts without implementing tasks."
+    },
+    {
+      id: "sync",
+      label: "Sync specs",
+      skill: "openspec-sync-specs",
+      description: "Prepare an unsent prompt to synchronize delta specs with main specs without archiving."
+    },
+    {
+      id: "archive",
+      label: "Archive change",
+      skill: "openspec-archive-change",
+      description: "Prepare an unsent prompt to check archival prerequisites and request confirmation."
+    },
+    {
+      id: "verify",
+      label: "Verify change",
+      skill: "openspec-verify-change",
+      description: "Prepare an unsent prompt to report gaps against planning artifacts without fixing or archiving."
+    },
+    {
+      id: "explore",
+      label: "Explore ideas",
+      skill: "openspec-explore",
+      description: "Prepare an unsent prompt to investigate this change and trade-offs without file changes."
+    }
+  ];
+  function changeWorkflowPrompt(workflow, change, text2) {
+    const prompts = text2.prompts;
+    const target = prompts.target(change.id);
+    const { skill } = changeWorkflows.find(({ id }) => id === workflow);
+    const goal = (workflow === "continue" || workflow === "explore") && change.goal?.trim() ? prompts.goal(change.goal) : "";
+    const progress = workflow === "apply" && change.stage === "progress" ? prompts.progress(change.completedTasks, change.totalTasks) : "";
+    return `${prompts.changeIntroduction(skill, target)}${goal}${progress}
+
+${prompts.changeGuidance[workflow](target)}`;
+  }
+  function actionPrompt(change, intent, text2) {
+    if (intent !== "primary") return changeWorkflowPrompt(intent, change, text2);
+    const workflow = change.stage === "planning" ? "continue" : change.stage === "complete" ? "archive" : "apply";
+    return changeWorkflowPrompt(workflow, change, text2);
+  }
+  var stages = [
+    { id: "planning", label: "Planning", action: "Plan" },
+    { id: "ready", label: "Ready", action: "Apply" },
+    { id: "progress", label: "In Progress", action: "Apply" },
+    { id: "complete", label: "Complete", action: "Archive" }
+  ];
+  var workflowLabel = (stage) => stages.find((item) => item.id === stage).action;
+
+  // src/panel/localization.ts
+  var isLanguagePreference = (value) => value === "auto" || value === "en" || value === "ru";
+  function resolveLanguage(preference, locale) {
+    if (preference !== "auto") return preference;
+    try {
+      return new Intl.Locale(locale).language.toLowerCase() === "ru" ? "ru" : "en";
+    } catch {
+      return "en";
+    }
+  }
+  var russianPlural = new Intl.PluralRules("ru");
+  function plural(count2, one, few, many) {
+    const form = russianPlural.select(count2);
+    return form === "one" ? one : form === "few" ? few : many;
+  }
+  var english = {
+    prompts: {
+      archiveAll: archiveAllPrompts.en,
+      globalIntroduction: (skill) => `Use your skill tool to load and invoke the ${skill} skill.`,
+      changeIntroduction: (skill, target) => `Use your skill tool to load and invoke the ${skill} skill for ${target}.`,
+      target: (id) => `OpenSpec change "${id}"`,
+      goal: (goal) => `
+Goal: ${goal}`,
+      progress: (done, total) => `
+${done} of ${total} tasks complete. Pick up where implementation left off and complete the remaining tasks.`,
+      globalGuidance: {
+        "bulk-archive": "Leave candidate selection, conflict assessment and batch confirmation to the workflow; do not preselect visible or completed changes.",
+        onboard: "Leave setup permission and onboarding task selection to the workflow and its user questions.",
+        explore: "Ask the user what ideas to explore. Investigate relevant context, options and trade-offs without file changes or implementation.",
+        creation: "Ask the user to establish their intended change; do not target or finish an existing change's scaffold."
+      },
+      globalSafety: "Preserve the workflow's setup checks and required user questions. If the skill is unavailable, report that limitation rather than substituting another workflow.",
+      changeGuidance: {
+        continue: () => "Inspect this existing change's status and follow the workflow's artefact instructions to create at most one next planning artefact. Preserve existing decisions and any recorded goal. If no goal is recorded, inspect existing context and ask the user to clarify it if necessary; do not invent a goal or write goal metadata automatically. Do not create another change or implement code. Leave complete planning and partially populated artefacts to the workflow; do not automatically Apply.",
+        explore: (target) => `Investigate the goal, relevant code, options and trade-offs for ${target}. Discuss findings without file changes or implementation. If no goal is recorded, inspect existing context and ask the user to clarify it if necessary; do not invent a goal.`,
+        apply: (target) => `Complete all remaining tasks in ${target}, then verify the implementation against its change artefacts. Resolve any issues found and verify again until all tasks are complete and verification passes. If blocked, report the blocker rather than marking unfinished work complete.`,
+        update: () => "Review and revise this change's planning artefacts, preserving existing decisions and the recorded goal. Retain the workflow's required user confirmations. Do not implement tasks or archive the change.",
+        sync: () => "Synchronize this change's delta specs with the main specs using the workflow's prerequisite checks and required user questions. Do not implement tasks or archive the change afterward.",
+        verify: () => "Compare the implementation with this change's planning artefacts and report gaps and inconsistencies diagnostically, without implementation or archiving.",
+        archive: () => "Check the workflow's archival prerequisites and retain required user confirmations; do not assume prior verification or permission to archive."
+      }
+    },
+    newChange: "New change",
+    changeName: "Change name",
+    namePlaceholder: "add-change-board",
+    goal: "Goal",
+    goalPlaceholder: "What should this change make possible?",
+    cancel: "Cancel",
+    close: "Close",
+    createSubmit: "Create",
+    retryRead: "Retry read",
+    inspectChange: "Inspect change",
+    dismissAttempt: "Dismiss attempt",
+    invalidName: "Use lowercase letters or digits separated by single hyphens.",
+    requiredGoal: "Goal is required.",
+    createCloseDescription: "Close this form without creating another scaffold.",
+    createSubmitDescription: "Directly create the named scaffold and recorded goal in the original project; no agent is launched.",
+    createRetryDescription: "Read the original project to check the uncertain creation outcome; do not retry creation.",
+    inspectDescription: "Open the observed change for inspection; this does not confirm that creation succeeded.",
+    dismissDescription: "Dismiss this attempt without retrying creation or removing any existing change.",
+    createReadRequired: "Creation outcome is unknown. Retry the read before creating again.",
+    createChecking: "Checking the original project for a matching change\u2026",
+    createObserved: "Creation outcome is unknown. An existing change with this name was found for inspection.",
+    createAbsent: "Creation outcome is unknown. The original project was refreshed; no matching change was found.",
+    originalReadFailed: "The original project could not be read.",
+    createReadFailed: (diagnostic) => `Creation outcome is unknown. ${diagnostic} Retry the read before creating again.`,
+    originalContext: (directory, root2) => ` Return to ${directory} (OpenSpec root ${root2}) to inspect or submit in the original project.`,
+    changeCreated: "Change created.",
+    deleteHeading: (name) => `Delete ${name}?`,
+    deleteWarning: (name) => `Permanently remove the planning folder for ${name}? This does not undo implementation or delete main specifications.`,
+    deleteCloseDescription: "Close this confirmation without removing the change.",
+    deleteRetryDescription: "Read the original project to resolve the deletion outcome; do not retry deletion.",
+    deleteSubmitDescription: "Permanently remove this change's planning folder; implementation and main specifications remain.",
+    deleteChecking: "Checking the original project for this change\u2026",
+    deletePresent: "Removal was not confirmed. The change is still listed. Close and confirm again before another attempt.",
+    deleteUnresolved: "Deletion outcome is unresolved. Retry the read of the original project before another attempt.",
+    archiveHeading: "Archive all completed changes?",
+    archiveWarning: "This creates a new session and sends a prompt to archive completed changes in this project. Unfinished changes will be skipped. The board stays open; use refresh to see updates.",
+    startArchiving: "Start archiving",
+    archiveCancelDescription: "Close this confirmation without creating a session or sending a prompt.",
+    archiveStartDescription: "Create a new session and submit the completed-only archive prompt; skip unfinished changes.",
+    promptPrepared: "Workflow prompt prepared in the open composer.",
+    promptFailed: "The workflow prompt could not be prepared.",
+    quickstartFailed: "Cannot open quickstart",
+    copyFailed: "Could not copy change name",
+    nameCopied: "Change name copied",
+    linkFailed: "Cannot open document link",
+    workspaceInspectionFailed: "Host workspace inspection failed. Inspect worktrees and sessions before trying again.",
+    workspaceInspectionTimeout: "Host workspace inspection timed out. No creation was requested.",
+    workspaceInspectionError: "Host workspace inspection failed.",
+    projectUnidentified: "Cannot identify the originating registered project. No worktree was requested.",
+    sessionsIncomplete: "Session inspection is incomplete. Inspect the project before trying again.",
+    worktreeCollision: (name, directory, session) => `Worktree or session for ${name} already exists${directory !== null ? ` at ${directory}` : ` (session ${session})`}. Inspect it instead of creating another worktree.`,
+    applyUnavailable: "This change is no longer applicable. Refresh before starting Apply.",
+    applyTitle: (name) => `Apply ${name}`,
+    retainedWorktree: (name, directory) => ` Worktree ${name} at ${directory} is retained.`,
+    applyNotSent: (id, sent, resource) => `Session ${id} exists, but Apply submission was not confirmed (${sent}).${resource} Inspect it before another attempt.`,
+    applyCreationFailed: (failure, resource) => `Apply creation failed (${failure}).${resource} Inspect worktrees and sessions before another attempt.`,
+    applyUnexpected: (id, resource) => `Session ${id} was returned with an unexpected worktree result.${resource} Inspect it before another attempt.`,
+    applySubmitted: (id, linked) => `Apply submitted in session ${id}.${linked ? "" : " Its workflow reference could not be saved."}`,
+    applyOpenFailed: (id) => `Apply session ${id} exists, but it could not be opened. Inspect that session; submission will not be repeated.`,
+    applyUncertain: (diagnostic) => `Apply launch outcome is uncertain. A worktree, session or sent prompt may already exist. Inspect worktrees and sessions before another attempt; this launch will not be retried automatically. ${diagnostic}`,
+    worktreeInspectionFailed: "Worktree inspection failed. No creation was requested.",
+    archiveTitle: "Archive completed OpenSpec changes",
+    archiveSubmitted: (id, linked) => linked ? `Archive prompt submitted in session ${id}. Use refresh to see updates.` : `Archive prompt submitted in session ${id}, but its workflow reference could not be saved.`,
+    noModel: "No model was available.",
+    submissionReason: (sent) => `Submission ${sent}.`,
+    archiveNotSent: (id, reason, linked) => `Session ${id} exists, but the archive prompt was not submitted successfully. ${reason} Inspect this session before starting again.${linked ? "" : " Its workflow reference was not saved."}`,
+    archiveCreationFailed: "The archive session could not be created. Inspect sessions before starting again.",
+    archiveRefused: (diagnostic) => `Archive launch failed: ${diagnostic}`,
+    archiveUncertain: "Archive launch outcome is uncertain. A session or submitted prompt may already exist. Inspect sessions before starting again; this launch will not be retried automatically.",
+    sentReasons: {
+      sent: "sent",
+      "no-model": "no-model",
+      skipped: "skipped",
+      failed: "failed",
+      unknown: "unknown",
+      "bootstrap-failed": "bootstrap-failed",
+      "session-create-failed": "session-create-failed"
+    },
+    back: "Back to changes",
+    backDescription: "Return to the changes board.",
+    copyName: "Copy change name",
+    copyDescription: "Copy this change's name to the clipboard.",
+    delete: "Delete",
+    deleteChange: "Delete change",
+    deleteDescription: "Open confirmation before permanently removing this change's planning folder.",
+    recordedObjective: "Recorded objective",
+    planningArtifacts: "Planning artefacts",
+    goalUnavailable: "Goal unavailable",
+    detailUnavailable: "This change is no longer available. Refresh or return to the board.",
+    detailRefreshDescription: "Read the latest change, document and task state without changing files.",
+    detailRetryDescription: "Retry reading this change; do not repeat any write.",
+    artifactLabels: {
+      proposal: "Proposal",
+      specs: "Specs",
+      design: "Design",
+      tasks: "Tasks"
+    },
+    readiness: { done: "Written", ready: "Ready to write", blocked: "Blocked", skipped: "Skipped" },
+    readyToWrite: "Ready to write this artefact. Continue planning in chat.",
+    blockedUntil: (ids) => `Blocked until ${ids.join(", ")} is written or skipped.`,
+    blockedUnknown: "Blocked by planning prerequisites; their details are not available.",
+    skippedArtifact: "This artefact was skipped.",
+    noArtifactDocuments: "This artefact has no available documents yet.",
+    noPlanningDocuments: "This change has no available planning documents.",
+    readFailed: " \xB7 Read failed",
+    loadingDocument: "Loading document\u2026",
+    retryDocument: "Retry document",
+    retryDocumentDescription: "Retry reading this document; do not repeat any write.",
+    renderingFailed: "Document rendering failed. Original source is shown.",
+    documentTask: "Document task",
+    documentImage: "Image",
+    retryTasks: "Retry tasks",
+    retryTasksDescription: "Retry reading tasks; do not change tasks or repeat any write.",
+    loadingTasks: "Loading tasks\u2026",
+    noTrackedTasks: "No tasks tracked yet.",
+    taskComplete: "Complete",
+    taskPending: "Pending",
+    explore: "Explore",
+    verify: "Verify",
+    workflowActions: {
+      planning: "Plan",
+      ready: "Apply",
+      progress: "Apply",
+      complete: "Archive"
+    },
+    workflows: "Workflows",
+    workflowsDescription: "Choose a workflow to prepare an editable, unsent prompt in the current chat.",
+    globalWorkflows: Object.fromEntries(
+      globalWorkflows.map(({ id, label, description }) => [id, { label, description }])
+    ),
+    changeWorkflows: Object.fromEntries(
+      changeWorkflows.map(({ id, label, description }) => [id, { label, description }])
+    ),
+    continueDescription: "Prepare an editable, unsent prompt for at most one next planning artifact; do not implement tasks.",
+    primaryArchiveDescription: "Prepare an editable, unsent archive prompt in the current chat; this does not archive directly.",
+    applyDestinationDescription: "Choose an unsent current-chat draft or explicitly create a worktree and session and send the Apply prompt.",
+    currentChat: "Prepare in current chat",
+    newWorktree: "Run in new worktree",
+    badServiceData: "The local OpenSpec service returned invalid data.",
+    rootChanged: "OpenSpec root changed.",
+    planningTargetChanged: "OpenSpec planning target changed.",
+    changeUnlisted: "Change is no longer listed.",
+    contextChanged: "OpenSpec context changed.",
+    readLimit: "Session read limit reached. Refresh to clear retained reads.",
+    localReadFailed: "OpenSpec read failed.",
+    createUnknown: "Creation outcome is unknown; check the original project before retrying.",
+    createUnknownData: "Creation outcome is unknown.",
+    deleteUnknown: "Deletion outcome is unknown; check the original project before retrying.",
+    language: "Language",
+    auto: "Like OpenChamber",
+    invalidPreference: "Invalid saved language preference. Using Like OpenChamber temporarily.",
+    readPreferenceFailed: "Could not read the language preference. Using Like OpenChamber temporarily.",
+    writePreferenceFailed: "Could not save the language preference. Your previous choice is unchanged.",
+    create: "Create scaffold\u2026",
+    archiveAll: "Archive all",
+    refresh: "Refresh",
+    search: "Search changes",
+    clearSearch: "Clear search",
+    help: "OpenSpec quickstart",
+    helpDescription: "Open the OpenSpec quickstart guide.",
+    createDescription: "Open a form that directly creates a scaffold with its name and goal; no agent prompt is sent.",
+    archiveDescription: "Open confirmation to create a new session and submit an archive prompt for completed changes only; unfinished changes are skipped.",
+    refreshDescription: "Read the latest board state without changing files.",
+    retryDescription: "Retry reading the board; do not repeat any write.",
+    openChangeDescription: "Open this change's planning documents and tasks.",
+    exploreDescription: "Prepare an editable, unsent exploration prompt without file changes.",
+    verifyDescription: "Prepare an editable, unsent diagnostic verification prompt; do not implement or archive.",
+    noProject: "No project selected",
+    selectProject: "Select an OpenChamber project or worktree to view its OpenSpec changes.",
+    retry: "Retry",
+    loading: "Loading\u2026",
+    noMatches: "No matching changes",
+    noChanges: "No changes here",
+    noTasks: "No tasks yet",
+    taskCompletion: "Task completion",
+    planningChanged: "Planning target changed. Refresh to establish the new scope.",
+    inspectionUnavailable: "The observed change is no longer available for inspection.",
+    boardLoadFailed: "The board could not be loaded.",
+    stages: {
+      planning: "Planning",
+      ready: "Ready",
+      progress: "In Progress",
+      complete: "Complete"
+    },
+    artifacts: (done, total) => `${done} of ${total} artefacts`,
+    tasks: (done, total) => `${done} of ${total} tasks complete`,
+    tally: (count2, done, total) => `${count2} changes \xB7 ${done} of ${total} tasks complete`,
+    unavailable: (id) => `${id} is no longer available.`,
+    stale: (id) => `${id} is stale; latest summary unavailable.`,
+    failures: (ids) => `${ids} could not be read. Refresh to try again.`
+  };
+  var russian = {
+    prompts: {
+      archiveAll: archiveAllPrompts.ru,
+      globalIntroduction: (skill) => `\u0418\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0439 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u043D\u0430\u0432\u044B\u043A\u043E\u0432, \u0447\u0442\u043E\u0431\u044B \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0438 \u0432\u044B\u0437\u0432\u0430\u0442\u044C \u043D\u0430\u0432\u044B\u043A ${skill}.`,
+      changeIntroduction: (skill, target) => `\u0418\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0439 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u043D\u0430\u0432\u044B\u043A\u043E\u0432, \u0447\u0442\u043E\u0431\u044B \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0438 \u0432\u044B\u0437\u0432\u0430\u0442\u044C \u043D\u0430\u0432\u044B\u043A ${skill} \u0434\u043B\u044F ${target}.`,
+      target: (id) => `\u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F OpenSpec "${id}"`,
+      goal: (goal) => `
+\u0426\u0435\u043B\u044C: ${goal}`,
+      progress: (done, total) => `
+\u0412\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u043E \u0437\u0430\u0434\u0430\u0447: ${done} \u0438\u0437 ${total}. \u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438 \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u044E \u0441 \u0442\u043E\u0433\u043E \u043C\u0435\u0441\u0442\u0430, \u0433\u0434\u0435 \u043E\u043D\u0430 \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u043B\u0430\u0441\u044C, \u0438 \u0432\u044B\u043F\u043E\u043B\u043D\u0438 \u043E\u0441\u0442\u0430\u0432\u0448\u0438\u0435\u0441\u044F \u0437\u0430\u0434\u0430\u0447\u0438.`,
+      globalGuidance: {
+        "bulk-archive": "\u041E\u0441\u0442\u0430\u0432\u044C \u0432\u044B\u0431\u043E\u0440 \u043A\u0430\u043D\u0434\u0438\u0434\u0430\u0442\u043E\u0432, \u043E\u0446\u0435\u043D\u043A\u0443 \u043A\u043E\u043D\u0444\u043B\u0438\u043A\u0442\u043E\u0432 \u0438 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u0435 \u043F\u0430\u043A\u0435\u0442\u043D\u043E\u0439 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u044E; \u043D\u0435 \u0432\u044B\u0431\u0438\u0440\u0430\u0439 \u0437\u0430\u0440\u0430\u043D\u0435\u0435 \u0432\u0438\u0434\u0438\u043C\u044B\u0435 \u0438\u043B\u0438 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F.",
+        onboard: "\u041E\u0441\u0442\u0430\u0432\u044C \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043D\u0438\u0435 \u043D\u0430 \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0443 \u0438 \u0432\u044B\u0431\u043E\u0440 \u0443\u0447\u0435\u0431\u043D\u043E\u0439 \u0437\u0430\u0434\u0430\u0447\u0438 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u044E \u0438 \u0435\u0433\u043E \u0432\u043E\u043F\u0440\u043E\u0441\u0430\u043C \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044E.",
+        explore: "\u0421\u043F\u0440\u043E\u0441\u0438 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F, \u043A\u0430\u043A\u0438\u0435 \u0438\u0434\u0435\u0438 \u0438\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u0442\u044C. \u0418\u0437\u0443\u0447\u0438 \u0441\u043E\u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0443\u044E\u0449\u0438\u0439 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442, \u0432\u0430\u0440\u0438\u0430\u043D\u0442\u044B \u0438 \u043A\u043E\u043C\u043F\u0440\u043E\u043C\u0438\u0441\u0441\u044B \u0431\u0435\u0437 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0444\u0430\u0439\u043B\u043E\u0432 \u0438 \u0431\u0435\u0437 \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438.",
+        creation: "\u0412\u044B\u044F\u0441\u043D\u0438, \u043A\u0430\u043A\u043E\u0435 \u043D\u043E\u0432\u043E\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0437\u0430\u0434\u0443\u043C\u0430\u043B \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C; \u043D\u0435 \u0432\u044B\u0431\u0438\u0440\u0430\u0439 \u0438 \u043D\u0435 \u0434\u043E\u043F\u043E\u043B\u043D\u044F\u0439 \u043A\u0430\u0440\u043A\u0430\u0441 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F."
+      },
+      globalSafety: "\u0421\u043E\u0445\u0440\u0430\u043D\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u0438 \u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u0432\u043E\u043F\u0440\u043E\u0441\u044B \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044E, \u043F\u0440\u0435\u0434\u0443\u0441\u043C\u043E\u0442\u0440\u0435\u043D\u043D\u044B\u0435 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u0435\u043C. \u0415\u0441\u043B\u0438 \u043D\u0430\u0432\u044B\u043A \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D, \u0441\u043E\u043E\u0431\u0449\u0438 \u043E\u0431 \u044D\u0442\u043E\u043C \u043E\u0433\u0440\u0430\u043D\u0438\u0447\u0435\u043D\u0438\u0438, \u0430 \u043D\u0435 \u043F\u043E\u0434\u043C\u0435\u043D\u044F\u0439 \u0435\u0433\u043E \u0434\u0440\u0443\u0433\u0438\u043C \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u0435\u043C.",
+      changeGuidance: {
+        continue: () => "\u0418\u0437\u0443\u0447\u0438 \u0441\u0442\u0430\u0442\u0443\u0441 \u044D\u0442\u043E\u0433\u043E \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0438 \u0441\u043B\u0435\u0434\u0443\u0439 \u0438\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0438\u044F\u043C \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u044F \u043F\u043E \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u0430\u043C, \u0447\u0442\u043E\u0431\u044B \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u043D\u0435 \u0431\u043E\u043B\u0435\u0435 \u043E\u0434\u043D\u043E\u0433\u043E \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E \u043F\u043B\u0430\u043D\u043E\u0432\u043E\u0433\u043E \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u0430. \u0421\u043E\u0445\u0440\u0430\u043D\u0438 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0438\u0435 \u0440\u0435\u0448\u0435\u043D\u0438\u044F \u0438 \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u043D\u0443\u044E \u0446\u0435\u043B\u044C. \u0415\u0441\u043B\u0438 \u0446\u0435\u043B\u044C \u043D\u0435 \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u0430, \u0438\u0437\u0443\u0447\u0438 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0438\u0439 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0438 \u043F\u0440\u0438 \u043D\u0435\u043E\u0431\u0445\u043E\u0434\u0438\u043C\u043E\u0441\u0442\u0438 \u043F\u043E\u043F\u0440\u043E\u0441\u0438 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F \u0443\u0442\u043E\u0447\u043D\u0438\u0442\u044C \u0435\u0451; \u043D\u0435 \u0432\u044B\u0434\u0443\u043C\u044B\u0432\u0430\u0439 \u0446\u0435\u043B\u044C \u0438 \u043D\u0435 \u0437\u0430\u043F\u0438\u0441\u044B\u0432\u0430\u0439 \u0435\u0451 \u043C\u0435\u0442\u0430\u0434\u0430\u043D\u043D\u044B\u0435 \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438. \u041D\u0435 \u0441\u043E\u0437\u0434\u0430\u0432\u0430\u0439 \u0434\u0440\u0443\u0433\u043E\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0438 \u043D\u0435 \u0440\u0435\u0430\u043B\u0438\u0437\u0443\u0439 \u043A\u043E\u0434. \u041E\u0431\u0440\u0430\u0431\u043E\u0442\u043A\u0443 \u0443\u0436\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u043E\u0433\u043E \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0447\u0430\u0441\u0442\u0438\u0447\u043D\u043E \u0437\u0430\u043F\u043E\u043B\u043D\u0435\u043D\u043D\u044B\u0445 \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u043E\u0432 \u043E\u0441\u0442\u0430\u0432\u044C \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u044E; \u043D\u0435 \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0438 \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438 \u043A \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044E \u0437\u0430\u0434\u0430\u0447.",
+        explore: (target) => `\u0418\u0441\u0441\u043B\u0435\u0434\u0443\u0439 \u0446\u0435\u043B\u044C, \u0441\u043E\u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0443\u044E\u0449\u0438\u0439 \u043A\u043E\u0434, \u0432\u0430\u0440\u0438\u0430\u043D\u0442\u044B \u0438 \u043A\u043E\u043C\u043F\u0440\u043E\u043C\u0438\u0441\u0441\u044B \u0434\u043B\u044F ${target}. \u041E\u0431\u0441\u0443\u0434\u0438 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u044B \u0431\u0435\u0437 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0444\u0430\u0439\u043B\u043E\u0432 \u0438 \u0431\u0435\u0437 \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438. \u0415\u0441\u043B\u0438 \u0446\u0435\u043B\u044C \u043D\u0435 \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u0430, \u0438\u0437\u0443\u0447\u0438 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0438\u0439 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0438 \u043F\u0440\u0438 \u043D\u0435\u043E\u0431\u0445\u043E\u0434\u0438\u043C\u043E\u0441\u0442\u0438 \u043F\u043E\u043F\u0440\u043E\u0441\u0438 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F \u0443\u0442\u043E\u0447\u043D\u0438\u0442\u044C \u0435\u0451; \u043D\u0435 \u0432\u044B\u0434\u0443\u043C\u044B\u0432\u0430\u0439 \u0446\u0435\u043B\u044C.`,
+        apply: (target) => `\u0412\u044B\u043F\u043E\u043B\u043D\u0438 \u0432\u0441\u0435 \u043E\u0441\u0442\u0430\u0432\u0448\u0438\u0435\u0441\u044F \u0437\u0430\u0434\u0430\u0447\u0438 \u0434\u043B\u044F ${target}, \u0437\u0430\u0442\u0435\u043C \u043F\u0440\u043E\u0432\u0435\u0440\u044C \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u044E \u043D\u0430 \u0441\u043E\u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0438\u0435 \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u0430\u043C \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F. \u0423\u0441\u0442\u0440\u0430\u043D\u0438 \u043D\u0430\u0439\u0434\u0435\u043D\u043D\u044B\u0435 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u044C \u0441\u043D\u043E\u0432\u0430, \u043F\u043E\u043A\u0430 \u0432\u0441\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043D\u0435 \u0431\u0443\u0434\u0443\u0442 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u044B \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u043D\u0435 \u043F\u0440\u043E\u0439\u0434\u0451\u0442 \u0443\u0441\u043F\u0435\u0448\u043D\u043E. \u041F\u0440\u0438 \u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u043A\u0435 \u0441\u043E\u043E\u0431\u0449\u0438 \u043E \u043F\u0440\u0435\u043F\u044F\u0442\u0441\u0442\u0432\u0438\u0438, \u0430 \u043D\u0435 \u043E\u0442\u043C\u0435\u0447\u0430\u0439 \u043D\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u0443\u044E \u0440\u0430\u0431\u043E\u0442\u0443 \u043A\u0430\u043A \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u043D\u0443\u044E.`,
+        update: () => "\u041F\u0435\u0440\u0435\u0441\u043C\u043E\u0442\u0440\u0438 \u0438 \u043E\u0431\u043D\u043E\u0432\u0438 \u043F\u043B\u0430\u043D\u043E\u0432\u044B\u0435 \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u044B \u044D\u0442\u043E\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F, \u0441\u043E\u0445\u0440\u0430\u043D\u0438\u0432 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0438\u0435 \u0440\u0435\u0448\u0435\u043D\u0438\u044F \u0438 \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u043D\u0443\u044E \u0446\u0435\u043B\u044C. \u0421\u043E\u0445\u0440\u0430\u043D\u0438 \u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u044F \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F, \u043F\u0440\u0435\u0434\u0443\u0441\u043C\u043E\u0442\u0440\u0435\u043D\u043D\u044B\u0435 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u0435\u043C. \u041D\u0435 \u0440\u0435\u0430\u043B\u0438\u0437\u0443\u0439 \u0437\u0430\u0434\u0430\u0447\u0438 \u0438 \u043D\u0435 \u0430\u0440\u0445\u0438\u0432\u0438\u0440\u0443\u0439 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435.",
+        sync: () => "\u0421\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0438\u0440\u0443\u0439 \u0434\u0435\u043B\u044C\u0442\u0430-\u0441\u043F\u0435\u0446\u0438\u0444\u0438\u043A\u0430\u0446\u0438\u0438 \u044D\u0442\u043E\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0441 \u043E\u0441\u043D\u043E\u0432\u043D\u044B\u043C\u0438 \u0441\u043F\u0435\u0446\u0438\u0444\u0438\u043A\u0430\u0446\u0438\u044F\u043C\u0438, \u0441\u043E\u0431\u043B\u044E\u0434\u0430\u044F \u043F\u0440\u0435\u0434\u0432\u0430\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0438 \u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u0432\u043E\u043F\u0440\u043E\u0441\u044B \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044E, \u043F\u0440\u0435\u0434\u0443\u0441\u043C\u043E\u0442\u0440\u0435\u043D\u043D\u044B\u0435 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u0435\u043C. \u041D\u0435 \u0440\u0435\u0430\u043B\u0438\u0437\u0443\u0439 \u0437\u0430\u0434\u0430\u0447\u0438 \u0438 \u043D\u0435 \u0430\u0440\u0445\u0438\u0432\u0438\u0440\u0443\u0439 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u043F\u043E\u0441\u043B\u0435 \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u0438.",
+        verify: () => "\u0421\u0440\u0430\u0432\u043D\u0438 \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u044E \u0441 \u043F\u043B\u0430\u043D\u043E\u0432\u044B\u043C\u0438 \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u0430\u043C\u0438 \u044D\u0442\u043E\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0438 \u0441\u043E\u043E\u0431\u0449\u0438 \u043E \u043F\u0440\u043E\u0431\u0435\u043B\u0430\u0445 \u0438 \u043D\u0435\u0441\u043E\u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0438\u044F\u0445 \u0432 \u0434\u0438\u0430\u0433\u043D\u043E\u0441\u0442\u0438\u0447\u0435\u0441\u043A\u043E\u043C \u0440\u0435\u0436\u0438\u043C\u0435, \u0431\u0435\u0437 \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438 \u0438 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438.",
+        archive: () => "\u041F\u0440\u043E\u0432\u0435\u0440\u044C \u043F\u0440\u0435\u0434\u0432\u0430\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u0443\u0441\u043B\u043E\u0432\u0438\u044F \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438, \u043F\u0440\u0435\u0434\u0443\u0441\u043C\u043E\u0442\u0440\u0435\u043D\u043D\u044B\u0435 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u0435\u043C, \u0438 \u0441\u043E\u0445\u0440\u0430\u043D\u0438 \u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u044F \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F; \u043D\u0435 \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u0430\u0433\u0430\u0439, \u0447\u0442\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0443\u0436\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E \u0438\u043B\u0438 \u0447\u0442\u043E \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u044F \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043D\u0430."
+      }
+    },
+    newChange: "\u041D\u043E\u0432\u043E\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435",
+    changeName: "\u0418\u043C\u044F \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F",
+    namePlaceholder: "add-change-board",
+    goal: "\u0426\u0435\u043B\u044C",
+    goalPlaceholder: "\u0427\u0442\u043E \u0434\u043E\u043B\u0436\u043D\u043E \u0441\u0442\u0430\u0442\u044C \u0432\u043E\u0437\u043C\u043E\u0436\u043D\u044B\u043C \u0431\u043B\u0430\u0433\u043E\u0434\u0430\u0440\u044F \u044D\u0442\u043E\u043C\u0443 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044E?",
+    cancel: "\u041E\u0442\u043C\u0435\u043D\u0430",
+    close: "\u0417\u0430\u043A\u0440\u044B\u0442\u044C",
+    createSubmit: "\u0421\u043E\u0437\u0434\u0430\u0442\u044C",
+    retryRead: "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435",
+    inspectChange: "\u041F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0435\u0442\u044C \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435",
+    dismissAttempt: "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u043F\u043E\u043F\u044B\u0442\u043A\u0443",
+    invalidName: "\u0418\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0439\u0442\u0435 \u0441\u0442\u0440\u043E\u0447\u043D\u044B\u0435 \u043B\u0430\u0442\u0438\u043D\u0441\u043A\u0438\u0435 \u0431\u0443\u043A\u0432\u044B \u0438\u043B\u0438 \u0446\u0438\u0444\u0440\u044B, \u0440\u0430\u0437\u0434\u0435\u043B\u0451\u043D\u043D\u044B\u0435 \u043E\u0434\u0438\u043D\u043E\u0447\u043D\u044B\u043C\u0438 \u0434\u0435\u0444\u0438\u0441\u0430\u043C\u0438.",
+    requiredGoal: "\u0423\u043A\u0430\u0436\u0438\u0442\u0435 \u0446\u0435\u043B\u044C.",
+    createCloseDescription: "\u0417\u0430\u043A\u0440\u044B\u0442\u044C \u0444\u043E\u0440\u043C\u0443 \u0431\u0435\u0437 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u0435\u0449\u0451 \u043E\u0434\u043D\u043E\u0439 \u0437\u0430\u0433\u043E\u0442\u043E\u0432\u043A\u0438.",
+    createSubmitDescription: "\u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0437\u0430\u0433\u043E\u0442\u043E\u0432\u043A\u0443 \u0441 \u0443\u043A\u0430\u0437\u0430\u043D\u043D\u044B\u043C \u0438\u043C\u0435\u043D\u0435\u043C \u0438 \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u043D\u043E\u0439 \u0446\u0435\u043B\u044C\u044E \u0432 \u0438\u0441\u0445\u043E\u0434\u043D\u043E\u043C \u043F\u0440\u043E\u0435\u043A\u0442\u0435; \u0430\u0433\u0435\u043D\u0442 \u043D\u0435 \u0437\u0430\u043F\u0443\u0441\u043A\u0430\u0435\u0442\u0441\u044F.",
+    createRetryDescription: "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0441\u0445\u043E\u0434\u043D\u044B\u0439 \u043F\u0440\u043E\u0435\u043A\u0442 \u0434\u043B\u044F \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E\u0433\u043E \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0430 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F, \u043D\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u044F \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u0435.",
+    inspectDescription: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u043D\u0430\u0439\u0434\u0435\u043D\u043D\u043E\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0434\u043B\u044F \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0430; \u044D\u0442\u043E \u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0430\u0435\u0442 \u0443\u0441\u043F\u0435\u0448\u043D\u043E\u0435 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u0435.",
+    dismissDescription: "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u043F\u043E\u043F\u044B\u0442\u043A\u0443 \u0431\u0435\u0437 \u043F\u043E\u0432\u0442\u043E\u0440\u043D\u043E\u0433\u043E \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u0438 \u0431\u0435\u0437 \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u044F \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F.",
+    createReadRequired: "\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D. \u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u0435 \u0447\u0442\u0435\u043D\u0438\u0435 \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u044B\u043C \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u0435\u043C.",
+    createChecking: "\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0438\u0441\u0445\u043E\u0434\u043D\u043E\u0433\u043E \u043F\u0440\u043E\u0435\u043A\u0442\u0430 \u043D\u0430 \u043D\u0430\u043B\u0438\u0447\u0438\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0441 \u0442\u0430\u043A\u0438\u043C \u0438\u043C\u0435\u043D\u0435\u043C\u2026",
+    createObserved: "\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D. \u041D\u0430\u0439\u0434\u0435\u043D\u043E \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0441 \u0442\u0430\u043A\u0438\u043C \u0438\u043C\u0435\u043D\u0435\u043C \u0434\u043B\u044F \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0430.",
+    createAbsent: "\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D. \u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0441\u0445\u043E\u0434\u043D\u043E\u0433\u043E \u043F\u0440\u043E\u0435\u043A\u0442\u0430 \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u044B; \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0441 \u0442\u0430\u043A\u0438\u043C \u0438\u043C\u0435\u043D\u0435\u043C \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E.",
+    originalReadFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0441\u0445\u043E\u0434\u043D\u044B\u0439 \u043F\u0440\u043E\u0435\u043A\u0442.",
+    createReadFailed: (diagnostic) => `\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D. ${diagnostic} \u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u0435 \u0447\u0442\u0435\u043D\u0438\u0435 \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u044B\u043C \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u0435\u043C.`,
+    originalContext: (directory, root2) => ` \u0412\u0435\u0440\u043D\u0438\u0442\u0435\u0441\u044C \u0432 ${directory} (\u043A\u043E\u0440\u0435\u043D\u044C OpenSpec ${root2}) \u0434\u043B\u044F \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0430 \u0438\u043B\u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0438 \u0432 \u0438\u0441\u0445\u043E\u0434\u043D\u043E\u043C \u043F\u0440\u043E\u0435\u043A\u0442\u0435.`,
+    changeCreated: "\u0418\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0441\u043E\u0437\u0434\u0430\u043D\u043E.",
+    deleteHeading: (name) => `\u0423\u0434\u0430\u043B\u0438\u0442\u044C ${name}?`,
+    deleteWarning: (name) => `\u0411\u0435\u0437\u0432\u043E\u0437\u0432\u0440\u0430\u0442\u043D\u043E \u0443\u0434\u0430\u043B\u0438\u0442\u044C \u043F\u0430\u043F\u043A\u0443 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F ${name}? \u042D\u0442\u043E \u043D\u0435 \u043E\u0442\u043C\u0435\u043D\u044F\u0435\u0442 \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u044E \u0438 \u043D\u0435 \u0443\u0434\u0430\u043B\u044F\u0435\u0442 \u043E\u0441\u043D\u043E\u0432\u043D\u044B\u0435 \u0441\u043F\u0435\u0446\u0438\u0444\u0438\u043A\u0430\u0446\u0438\u0438.`,
+    deleteCloseDescription: "\u0417\u0430\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u0435 \u0431\u0435\u0437 \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u044F \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F.",
+    deleteRetryDescription: "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0441\u0445\u043E\u0434\u043D\u044B\u0439 \u043F\u0440\u043E\u0435\u043A\u0442 \u0434\u043B\u044F \u0432\u044B\u044F\u0441\u043D\u0435\u043D\u0438\u044F \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0430 \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u044F, \u043D\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u044F \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u0435.",
+    deleteSubmitDescription: "\u0411\u0435\u0437\u0432\u043E\u0437\u0432\u0440\u0430\u0442\u043D\u043E \u0443\u0434\u0430\u043B\u0438\u0442\u044C \u043F\u0430\u043F\u043A\u0443 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F; \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u044F \u0438 \u043E\u0441\u043D\u043E\u0432\u043D\u044B\u0435 \u0441\u043F\u0435\u0446\u0438\u0444\u0438\u043A\u0430\u0446\u0438\u0438 \u0441\u043E\u0445\u0440\u0430\u043D\u044F\u044E\u0442\u0441\u044F.",
+    deleteChecking: "\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u043D\u0430\u043B\u0438\u0447\u0438\u044F \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0432 \u0438\u0441\u0445\u043E\u0434\u043D\u043E\u043C \u043F\u0440\u043E\u0435\u043A\u0442\u0435\u2026",
+    deletePresent: "\u0423\u0434\u0430\u043B\u0435\u043D\u0438\u0435 \u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u043E. \u0418\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0432\u0441\u0451 \u0435\u0449\u0451 \u0432 \u0441\u043F\u0438\u0441\u043A\u0435. \u0417\u0430\u043A\u0440\u043E\u0439\u0442\u0435 \u043E\u043A\u043D\u043E \u0438 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u0435 \u0437\u0430\u043D\u043E\u0432\u043E \u043F\u0435\u0440\u0435\u0434 \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0439 \u043F\u043E\u043F\u044B\u0442\u043A\u043E\u0439.",
+    deleteUnresolved: "\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u044F \u043D\u0435 \u0432\u044B\u044F\u0441\u043D\u0435\u043D. \u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u0435 \u0447\u0442\u0435\u043D\u0438\u0435 \u0438\u0441\u0445\u043E\u0434\u043D\u043E\u0433\u043E \u043F\u0440\u043E\u0435\u043A\u0442\u0430 \u043F\u0435\u0440\u0435\u0434 \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0439 \u043F\u043E\u043F\u044B\u0442\u043A\u043E\u0439.",
+    archiveHeading: "\u0410\u0440\u0445\u0438\u0432\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0432\u0441\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F?",
+    archiveWarning: "\u0411\u0443\u0434\u0435\u0442 \u0441\u043E\u0437\u0434\u0430\u043D \u043D\u043E\u0432\u044B\u0439 \u0441\u0435\u0430\u043D\u0441 \u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D \u0437\u0430\u043F\u0440\u043E\u0441 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0445 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439 \u044D\u0442\u043E\u0433\u043E \u043F\u0440\u043E\u0435\u043A\u0442\u0430. \u041D\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0431\u0443\u0434\u0443\u0442 \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u044B. \u0414\u043E\u0441\u043A\u0430 \u043E\u0441\u0442\u0430\u043D\u0435\u0442\u0441\u044F \u043E\u0442\u043A\u0440\u044B\u0442\u043E\u0439; \u043E\u0431\u043D\u043E\u0432\u0438\u0442\u0435 \u0435\u0451 \u0434\u043B\u044F \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0430 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u043E\u0432.",
+    startArchiving: "\u041D\u0430\u0447\u0430\u0442\u044C \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u044E",
+    archiveCancelDescription: "\u0417\u0430\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u0435 \u0431\u0435\u0437 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u0441\u0435\u0430\u043D\u0441\u0430 \u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u0430.",
+    archiveStartDescription: "\u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0441\u0435\u0430\u043D\u0441 \u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C \u0437\u0430\u043F\u0440\u043E\u0441 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438 \u0442\u043E\u043B\u044C\u043A\u043E \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0445 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439; \u043D\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0435 \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u0441\u044F.",
+    promptPrepared: "\u0417\u0430\u043F\u0440\u043E\u0441 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u044F \u043F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u043B\u0435\u043D \u0432 \u043E\u0442\u043A\u0440\u044B\u0442\u043E\u043C \u0440\u0435\u0434\u0430\u043A\u0442\u043E\u0440\u0435 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u044F.",
+    promptFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u0437\u0430\u043F\u0440\u043E\u0441 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u044F.",
+    quickstartFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0442\u043A\u0440\u044B\u0442\u044C \u043A\u0440\u0430\u0442\u043A\u043E\u0435 \u0440\u0443\u043A\u043E\u0432\u043E\u0434\u0441\u0442\u0432\u043E",
+    copyFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0438\u043C\u044F \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F",
+    nameCopied: "\u0418\u043C\u044F \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0441\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u043D\u043E",
+    linkFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0442\u043A\u0440\u044B\u0442\u044C \u0441\u0441\u044B\u043B\u043A\u0443 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u0430",
+    workspaceInspectionFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u0440\u0430\u0431\u043E\u0447\u0435\u0435 \u043F\u0440\u043E\u0441\u0442\u0440\u0430\u043D\u0441\u0442\u0432\u043E \u0445\u043E\u0441\u0442\u0430. \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0440\u0430\u0431\u043E\u0447\u0438\u0435 \u0434\u0435\u0440\u0435\u0432\u044C\u044F \u0438 \u0441\u0435\u0430\u043D\u0441\u044B \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u043E\u0439 \u043F\u043E\u043F\u044B\u0442\u043A\u043E\u0439.",
+    workspaceInspectionTimeout: "\u0418\u0441\u0442\u0435\u043A\u043B\u043E \u0432\u0440\u0435\u043C\u044F \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0440\u0430\u0431\u043E\u0447\u0435\u0433\u043E \u043F\u0440\u043E\u0441\u0442\u0440\u0430\u043D\u0441\u0442\u0432\u0430 \u0445\u043E\u0441\u0442\u0430. \u0421\u043E\u0437\u0434\u0430\u043D\u0438\u0435 \u043D\u0435 \u0437\u0430\u043F\u0440\u0430\u0448\u0438\u0432\u0430\u043B\u043E\u0441\u044C.",
+    workspaceInspectionError: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u0440\u0430\u0431\u043E\u0447\u0435\u0435 \u043F\u0440\u043E\u0441\u0442\u0440\u0430\u043D\u0441\u0442\u0432\u043E \u0445\u043E\u0441\u0442\u0430.",
+    projectUnidentified: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0438\u0442\u044C \u0438\u0441\u0445\u043E\u0434\u043D\u044B\u0439 \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0439 \u043F\u0440\u043E\u0435\u043A\u0442. \u0420\u0430\u0431\u043E\u0447\u0435\u0435 \u0434\u0435\u0440\u0435\u0432\u043E \u043D\u0435 \u0437\u0430\u043F\u0440\u0430\u0448\u0438\u0432\u0430\u043B\u043E\u0441\u044C.",
+    sessionsIncomplete: "\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0441\u0435\u0430\u043D\u0441\u043E\u0432 \u043D\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043D\u0430. \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u043F\u0440\u043E\u0435\u043A\u0442 \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u043E\u0439 \u043F\u043E\u043F\u044B\u0442\u043A\u043E\u0439.",
+    worktreeCollision: (name, directory, session) => `\u0420\u0430\u0431\u043E\u0447\u0435\u0435 \u0434\u0435\u0440\u0435\u0432\u043E \u0438\u043B\u0438 \u0441\u0435\u0430\u043D\u0441 \u0434\u043B\u044F ${name} \u0443\u0436\u0435 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442${directory !== null ? ` \u043F\u043E \u043F\u0443\u0442\u0438 ${directory}` : ` (\u0441\u0435\u0430\u043D\u0441 ${session})`}. \u041F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0438\u0442\u0435 \u0435\u0433\u043E \u0432\u043C\u0435\u0441\u0442\u043E \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u0435\u0449\u0451 \u043E\u0434\u043D\u043E\u0433\u043E \u0440\u0430\u0431\u043E\u0447\u0435\u0433\u043E \u0434\u0435\u0440\u0435\u0432\u0430.`,
+    applyUnavailable: "\u042D\u0442\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0431\u043E\u043B\u044C\u0448\u0435 \u043D\u0435 \u0434\u043E\u0441\u0442\u0443\u043F\u043D\u043E \u0434\u043B\u044F \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F. \u041E\u0431\u043D\u043E\u0432\u0438\u0442\u0435 \u0434\u0430\u043D\u043D\u044B\u0435 \u043F\u0435\u0440\u0435\u0434 \u0437\u0430\u043F\u0443\u0441\u043A\u043E\u043C \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F.",
+    applyTitle: (name) => `\u0412\u044B\u043F\u043E\u043B\u043D\u0438\u0442\u044C ${name}`,
+    retainedWorktree: (name, directory) => ` \u0420\u0430\u0431\u043E\u0447\u0435\u0435 \u0434\u0435\u0440\u0435\u0432\u043E ${name} \u043F\u043E \u043F\u0443\u0442\u0438 ${directory} \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u043E.`,
+    applyNotSent: (id, sent, resource) => `\u0421\u0435\u0430\u043D\u0441 ${id} \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442, \u043D\u043E \u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0430 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F \u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0430 (${sent}).${resource} \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0435\u0433\u043E \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u043E\u0439 \u043F\u043E\u043F\u044B\u0442\u043A\u043E\u0439.`,
+    applyCreationFailed: (failure, resource) => `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u0441\u0435\u0430\u043D\u0441 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F (${failure}).${resource} \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0440\u0430\u0431\u043E\u0447\u0438\u0435 \u0434\u0435\u0440\u0435\u0432\u044C\u044F \u0438 \u0441\u0435\u0430\u043D\u0441\u044B \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u043E\u0439 \u043F\u043E\u043F\u044B\u0442\u043A\u043E\u0439.`,
+    applyUnexpected: (id, resource) => `\u0421\u0435\u0430\u043D\u0441 ${id} \u0432\u043E\u0437\u0432\u0440\u0430\u0449\u0451\u043D \u0441 \u043D\u0435\u043E\u0436\u0438\u0434\u0430\u043D\u043D\u044B\u043C\u0438 \u0434\u0430\u043D\u043D\u044B\u043C\u0438 \u0440\u0430\u0431\u043E\u0447\u0435\u0433\u043E \u0434\u0435\u0440\u0435\u0432\u0430.${resource} \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0435\u0433\u043E \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u043E\u0439 \u043F\u043E\u043F\u044B\u0442\u043A\u043E\u0439.`,
+    applySubmitted: (id, linked) => `\u0417\u0430\u043F\u0440\u043E\u0441 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D \u0432 \u0441\u0435\u0430\u043D\u0441 ${id}.${linked ? "" : " \u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C \u0441\u0441\u044B\u043B\u043A\u0443 \u043D\u0430 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u0439."}`,
+    applyOpenFailed: (id) => `\u0421\u0435\u0430\u043D\u0441 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F ${id} \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442, \u043D\u043E \u043E\u0442\u043A\u0440\u044B\u0442\u044C \u0435\u0433\u043E \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C. \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u044D\u0442\u043E\u0442 \u0441\u0435\u0430\u043D\u0441; \u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0430 \u043D\u0435 \u0431\u0443\u0434\u0435\u0442 \u043F\u043E\u0432\u0442\u043E\u0440\u0435\u043D\u0430.`,
+    applyUncertain: (diagnostic) => `\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0437\u0430\u043F\u0443\u0441\u043A\u0430 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D. \u0420\u0430\u0431\u043E\u0447\u0435\u0435 \u0434\u0435\u0440\u0435\u0432\u043E, \u0441\u0435\u0430\u043D\u0441 \u0438\u043B\u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0443\u0436\u0435 \u043C\u043E\u0433\u0443\u0442 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u043E\u0432\u0430\u0442\u044C. \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0440\u0430\u0431\u043E\u0447\u0438\u0435 \u0434\u0435\u0440\u0435\u0432\u044C\u044F \u0438 \u0441\u0435\u0430\u043D\u0441\u044B \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u043E\u0439 \u043F\u043E\u043F\u044B\u0442\u043A\u043E\u0439; \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u043E\u0433\u043E \u043F\u043E\u0432\u0442\u043E\u0440\u0430 \u0437\u0430\u043F\u0443\u0441\u043A\u0430 \u043D\u0435 \u0431\u0443\u0434\u0435\u0442. ${diagnostic}`,
+    worktreeInspectionFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u0440\u0430\u0431\u043E\u0447\u0435\u0435 \u0434\u0435\u0440\u0435\u0432\u043E. \u0421\u043E\u0437\u0434\u0430\u043D\u0438\u0435 \u043D\u0435 \u0437\u0430\u043F\u0440\u0430\u0448\u0438\u0432\u0430\u043B\u043E\u0441\u044C.",
+    archiveTitle: "\u0410\u0440\u0445\u0438\u0432\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F OpenSpec",
+    archiveSubmitted: (id, linked) => linked ? `\u0417\u0430\u043F\u0440\u043E\u0441 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D \u0432 \u0441\u0435\u0430\u043D\u0441 ${id}. \u041E\u0431\u043D\u043E\u0432\u0438\u0442\u0435 \u0434\u043E\u0441\u043A\u0443 \u0434\u043B\u044F \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0430 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u043E\u0432.` : `\u0417\u0430\u043F\u0440\u043E\u0441 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D \u0432 \u0441\u0435\u0430\u043D\u0441 ${id}, \u043D\u043E \u0441\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C \u0441\u0441\u044B\u043B\u043A\u0443 \u043D\u0430 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u0439 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C.`,
+    noModel: "\u041D\u0435\u0442 \u0434\u043E\u0441\u0442\u0443\u043F\u043D\u043E\u0439 \u043C\u043E\u0434\u0435\u043B\u0438.",
+    submissionReason: (sent) => `\u041E\u0442\u043F\u0440\u0430\u0432\u043A\u0430: ${sent}.`,
+    archiveNotSent: (id, reason, linked) => `\u0421\u0435\u0430\u043D\u0441 ${id} \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442, \u043D\u043E \u0437\u0430\u043F\u0440\u043E\u0441 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438 \u043D\u0435 \u0431\u044B\u043B \u0443\u0441\u043F\u0435\u0448\u043D\u043E \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D. ${reason} \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u044D\u0442\u043E\u0442 \u0441\u0435\u0430\u043D\u0441 \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u044B\u043C \u0437\u0430\u043F\u0443\u0441\u043A\u043E\u043C.${linked ? "" : " \u0421\u0441\u044B\u043B\u043A\u0430 \u043D\u0430 \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u0439 \u043D\u0435 \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u0430."}`,
+    archiveCreationFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u0441\u0435\u0430\u043D\u0441 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438. \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u0435\u0430\u043D\u0441\u044B \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u044B\u043C \u0437\u0430\u043F\u0443\u0441\u043A\u043E\u043C.",
+    archiveRefused: (diagnostic) => `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u044E: ${diagnostic}`,
+    archiveUncertain: "\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0437\u0430\u043F\u0443\u0441\u043A\u0430 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438 \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D. \u0421\u0435\u0430\u043D\u0441 \u0438\u043B\u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0443\u0436\u0435 \u043C\u043E\u0433\u0443\u0442 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u043E\u0432\u0430\u0442\u044C. \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u0435\u0430\u043D\u0441\u044B \u043F\u0435\u0440\u0435\u0434 \u043D\u043E\u0432\u044B\u043C \u0437\u0430\u043F\u0443\u0441\u043A\u043E\u043C; \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u043E\u0433\u043E \u043F\u043E\u0432\u0442\u043E\u0440\u0430 \u0437\u0430\u043F\u0443\u0441\u043A\u0430 \u043D\u0435 \u0431\u0443\u0434\u0435\u0442.",
+    sentReasons: {
+      sent: "\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E",
+      "no-model": "\u043D\u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u0438",
+      skipped: "\u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u043E",
+      failed: "\u043E\u0448\u0438\u0431\u043A\u0430",
+      unknown: "\u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E",
+      "bootstrap-failed": "\u043E\u0448\u0438\u0431\u043A\u0430 \u043F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u043A\u0438",
+      "session-create-failed": "\u043E\u0448\u0438\u0431\u043A\u0430 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u0441\u0435\u0430\u043D\u0441\u0430"
+    },
+    back: "\u041D\u0430\u0437\u0430\u0434 \u043A \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F\u043C",
+    backDescription: "\u0412\u0435\u0440\u043D\u0443\u0442\u044C\u0441\u044F \u043A \u0434\u043E\u0441\u043A\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439.",
+    copyName: "\u041A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0438\u043C\u044F \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F",
+    copyDescription: "\u041A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0438\u043C\u044F \u044D\u0442\u043E\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0432 \u0431\u0443\u0444\u0435\u0440 \u043E\u0431\u043C\u0435\u043D\u0430.",
+    delete: "\u0423\u0434\u0430\u043B\u0438\u0442\u044C",
+    deleteChange: "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435",
+    deleteDescription: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u0435 \u043F\u0435\u0440\u0435\u0434 \u0431\u0435\u0437\u0432\u043E\u0437\u0432\u0440\u0430\u0442\u043D\u044B\u043C \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u0435\u043C \u043F\u0430\u043F\u043A\u0438 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F.",
+    recordedObjective: "\u0417\u0430\u043F\u0438\u0441\u0430\u043D\u043D\u0430\u044F \u0446\u0435\u043B\u044C",
+    planningArtifacts: "\u0410\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u044B \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F",
+    goalUnavailable: "\u0426\u0435\u043B\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430",
+    detailUnavailable: "\u042D\u0442\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0431\u043E\u043B\u044C\u0448\u0435 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u043E. \u041E\u0431\u043D\u043E\u0432\u0438\u0442\u0435 \u0434\u0430\u043D\u043D\u044B\u0435 \u0438\u043B\u0438 \u0432\u0435\u0440\u043D\u0438\u0442\u0435\u0441\u044C \u043A \u0434\u043E\u0441\u043A\u0435.",
+    detailRefreshDescription: "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0430\u043A\u0442\u0443\u0430\u043B\u044C\u043D\u043E\u0435 \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F, \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u043E\u0432 \u0438 \u0437\u0430\u0434\u0430\u0447 \u0431\u0435\u0437 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0444\u0430\u0439\u043B\u043E\u0432.",
+    detailRetryDescription: "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F, \u043D\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u044F \u0437\u0430\u043F\u0438\u0441\u044C.",
+    artifactLabels: {
+      proposal: "\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435",
+      specs: "\u0421\u043F\u0435\u0446\u0438\u0444\u0438\u043A\u0430\u0446\u0438\u0438",
+      design: "\u041F\u0440\u043E\u0435\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0435",
+      tasks: "\u0417\u0430\u0434\u0430\u0447\u0438"
+    },
+    readiness: {
+      done: "\u041D\u0430\u043F\u0438\u0441\u0430\u043D\u043E",
+      ready: "\u0413\u043E\u0442\u043E\u0432\u043E \u043A \u043D\u0430\u043F\u0438\u0441\u0430\u043D\u0438\u044E",
+      blocked: "\u0417\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D\u043E",
+      skipped: "\u041F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u043E"
+    },
+    readyToWrite: "\u0410\u0440\u0442\u0435\u0444\u0430\u043A\u0442 \u0433\u043E\u0442\u043E\u0432 \u043A \u043D\u0430\u043F\u0438\u0441\u0430\u043D\u0438\u044E. \u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u0435 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0435 \u0432 \u0447\u0430\u0442\u0435.",
+    blockedUntil: (ids) => `\u0417\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D\u043E, \u043F\u043E\u043A\u0430 \u043D\u0435 \u043D\u0430\u043F\u0438\u0441\u0430\u043D\u044B \u0438\u043B\u0438 \u043D\u0435 \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u044B: ${ids.map((id) => russian.artifactLabels[id] ?? id).join(", ")}.`,
+    blockedUnknown: "\u0417\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D\u043E \u0443\u0441\u043B\u043E\u0432\u0438\u044F\u043C\u0438 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F; \u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0438 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B.",
+    skippedArtifact: "\u042D\u0442\u043E\u0442 \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442 \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D.",
+    noArtifactDocuments: "\u0423 \u044D\u0442\u043E\u0433\u043E \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u0430 \u043F\u043E\u043A\u0430 \u043D\u0435\u0442 \u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B\u0445 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u043E\u0432.",
+    noPlanningDocuments: "\u0423 \u044D\u0442\u043E\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u043D\u0435\u0442 \u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B\u0445 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u043E\u0432 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F.",
+    readFailed: " \xB7 \u041E\u0448\u0438\u0431\u043A\u0430 \u0447\u0442\u0435\u043D\u0438\u044F",
+    loadingDocument: "\u0417\u0430\u0433\u0440\u0443\u0437\u043A\u0430 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u0430\u2026",
+    retryDocument: "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u0430",
+    retryDocumentDescription: "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u0430, \u043D\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u044F \u0437\u0430\u043F\u0438\u0441\u044C.",
+    renderingFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0442\u043E\u0431\u0440\u0430\u0437\u0438\u0442\u044C \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442. \u041F\u043E\u043A\u0430\u0437\u0430\u043D \u0438\u0441\u0445\u043E\u0434\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442.",
+    documentTask: "\u0417\u0430\u0434\u0430\u0447\u0430 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u0430",
+    documentImage: "\u0418\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u0435",
+    retryTasks: "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0437\u0430\u0434\u0430\u0447",
+    retryTasksDescription: "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0437\u0430\u0434\u0430\u0447, \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u044F\u044F \u0437\u0430\u0434\u0430\u0447\u0438 \u0438 \u043D\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u044F \u0437\u0430\u043F\u0438\u0441\u044C.",
+    loadingTasks: "\u0417\u0430\u0433\u0440\u0443\u0437\u043A\u0430 \u0437\u0430\u0434\u0430\u0447\u2026",
+    noTrackedTasks: "\u041E\u0442\u0441\u043B\u0435\u0436\u0438\u0432\u0430\u0435\u043C\u044B\u0445 \u0437\u0430\u0434\u0430\u0447 \u043F\u043E\u043A\u0430 \u043D\u0435\u0442.",
+    taskComplete: "\u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043D\u043E",
+    taskPending: "\u041E\u0436\u0438\u0434\u0430\u0435\u0442 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F",
+    explore: "\u0418\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u0442\u044C",
+    verify: "\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C",
+    workflowActions: {
+      planning: "\u041F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u0442\u044C",
+      ready: "\u0412\u044B\u043F\u043E\u043B\u043D\u0438\u0442\u044C",
+      progress: "\u0412\u044B\u043F\u043E\u043B\u043D\u0438\u0442\u044C",
+      complete: "\u0410\u0440\u0445\u0438\u0432\u0438\u0440\u043E\u0432\u0430\u0442\u044C"
+    },
+    workflows: "\u0421\u0446\u0435\u043D\u0430\u0440\u0438\u0438",
+    workflowsDescription: "\u0412\u044B\u0431\u0440\u0430\u0442\u044C \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u0439 \u0434\u043B\u044F \u043F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u043A\u0438 \u0440\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u0443\u0435\u043C\u043E\u0433\u043E, \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u043E\u0433\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u0432 \u0442\u0435\u043A\u0443\u0449\u0435\u043C \u0447\u0430\u0442\u0435.",
+    globalWorkflows: {
+      propose: {
+        label: "\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0438\u0442\u044C \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u043D\u043E\u0432\u043E\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0438 \u0435\u0433\u043E \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u043E\u0432 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F."
+      },
+      explore: {
+        label: "\u0418\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u0442\u044C \u0438\u0434\u0435\u0438",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u0438\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u043D\u0438\u044F \u0438\u0434\u0435\u0439 \u0438 \u043A\u043E\u043C\u043F\u0440\u043E\u043C\u0438\u0441\u0441\u043E\u0432 \u0431\u0435\u0437 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0444\u0430\u0439\u043B\u043E\u0432."
+      },
+      new: {
+        label: "\u041D\u043E\u0432\u043E\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u043F\u043E\u0448\u0430\u0433\u043E\u0432\u043E\u0433\u043E \u043D\u0430\u0447\u0430\u043B\u0430 \u043D\u043E\u0432\u043E\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F."
+      },
+      ff: {
+        label: "\u0411\u044B\u0441\u0442\u0440\u043E\u0435 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0435",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u0432\u0441\u0435\u0445 \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u043E\u0432 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F \u043D\u043E\u0432\u043E\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F."
+      },
+      "bulk-archive": {
+        label: "\u0413\u0440\u0443\u043F\u043F\u043E\u0432\u0430\u044F \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u044F",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u0432\u044B\u0431\u043E\u0440\u0430 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439, \u043E\u0446\u0435\u043D\u043A\u0438 \u043A\u043E\u043D\u0444\u043B\u0438\u043A\u0442\u043E\u0432 \u0438 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u044F \u0433\u0440\u0443\u043F\u043F\u043E\u0432\u043E\u0439 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438."
+      },
+      onboard: {
+        label: "\u0412\u0432\u0435\u0434\u0435\u043D\u0438\u0435 \u0432 \u0440\u0430\u0431\u043E\u0442\u0443",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u043F\u043E\u043B\u043D\u043E\u0433\u043E \u0446\u0438\u043A\u043B\u0430 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0441 \u0432\u043E\u043F\u0440\u043E\u0441\u0430\u043C\u0438 \u043E \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0435 \u0438 \u0437\u0430\u0434\u0430\u0447\u0430\u0445."
+      }
+    },
+    changeWorkflows: {
+      continue: {
+        label: "\u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u043D\u0435 \u0431\u043E\u043B\u0435\u0435 \u043E\u0434\u043D\u043E\u0433\u043E \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u0430 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F, \u0431\u0435\u0437 \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438."
+      },
+      apply: {
+        label: "\u0412\u044B\u043F\u043E\u043B\u043D\u0438\u0442\u044C \u0437\u0430\u0434\u0430\u0447\u0438",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0432 \u0442\u0435\u043A\u0443\u0449\u0435\u043C \u0447\u0430\u0442\u0435 \u0434\u043B\u044F \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u043E\u0441\u0442\u0430\u0432\u0448\u0438\u0445\u0441\u044F \u0437\u0430\u0434\u0430\u0447."
+      },
+      update: {
+        label: "\u041E\u0431\u043D\u043E\u0432\u0438\u0442\u044C \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u043F\u0435\u0440\u0435\u0441\u043C\u043E\u0442\u0440\u0430 \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u043E\u0432 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F \u0431\u0435\u0437 \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438 \u0437\u0430\u0434\u0430\u0447."
+      },
+      sync: {
+        label: "\u0421\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0441\u043F\u0435\u0446\u0438\u0444\u0438\u043A\u0430\u0446\u0438\u0438",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u0438 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439 \u0441\u043F\u0435\u0446\u0438\u0444\u0438\u043A\u0430\u0446\u0438\u0439 \u0441 \u043E\u0441\u043D\u043E\u0432\u043D\u044B\u043C\u0438 \u0441\u043F\u0435\u0446\u0438\u0444\u0438\u043A\u0430\u0446\u0438\u044F\u043C\u0438 \u0431\u0435\u0437 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438."
+      },
+      archive: {
+        label: "\u0410\u0440\u0445\u0438\u0432\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0443\u0441\u043B\u043E\u0432\u0438\u0439 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438 \u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u044F."
+      },
+      verify: {
+        label: "\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u043E\u0442\u0447\u0451\u0442\u0430 \u043E \u0440\u0430\u0441\u0445\u043E\u0436\u0434\u0435\u043D\u0438\u044F\u0445 \u0441 \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u0430\u043C\u0438 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F \u0431\u0435\u0437 \u0438\u0441\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u0439 \u0438 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438."
+      },
+      explore: {
+        label: "\u0418\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u0442\u044C \u0438\u0434\u0435\u0438",
+        description: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u0438\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u043D\u0438\u044F \u044D\u0442\u043E\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0438 \u043A\u043E\u043C\u043F\u0440\u043E\u043C\u0438\u0441\u0441\u043E\u0432 \u0431\u0435\u0437 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0444\u0430\u0439\u043B\u043E\u0432."
+      }
+    },
+    continueDescription: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u0440\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u0443\u0435\u043C\u044B\u0439, \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0434\u043B\u044F \u043D\u0435 \u0431\u043E\u043B\u0435\u0435 \u043E\u0434\u043D\u043E\u0433\u043E \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u0430 \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F, \u0431\u0435\u0437 \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438 \u0437\u0430\u0434\u0430\u0447.",
+    primaryArchiveDescription: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u0440\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u0443\u0435\u043C\u044B\u0439, \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438 \u0432 \u0442\u0435\u043A\u0443\u0449\u0435\u043C \u0447\u0430\u0442\u0435; \u044D\u0442\u043E \u043D\u0435 \u043F\u0440\u044F\u043C\u0430\u044F \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u044F.",
+    applyDestinationDescription: "\u0412\u044B\u0431\u0440\u0430\u0442\u044C \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0447\u0435\u0440\u043D\u043E\u0432\u0438\u043A \u0432 \u0442\u0435\u043A\u0443\u0449\u0435\u043C \u0447\u0430\u0442\u0435 \u0438\u043B\u0438 \u044F\u0432\u043D\u043E \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u0440\u0430\u0431\u043E\u0447\u0435\u0435 \u0434\u0435\u0440\u0435\u0432\u043E \u0438 \u0441\u0435\u0430\u043D\u0441 \u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C \u0437\u0430\u043F\u0440\u043E\u0441 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F.",
+    currentChat: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u0432 \u0442\u0435\u043A\u0443\u0449\u0435\u043C \u0447\u0430\u0442\u0435",
+    newWorktree: "\u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u0432 \u043D\u043E\u0432\u043E\u043C \u0440\u0430\u0431\u043E\u0447\u0435\u043C \u0434\u0435\u0440\u0435\u0432\u0435",
+    badServiceData: "\u041B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0439 \u0441\u0435\u0440\u0432\u0438\u0441 OpenSpec \u0432\u0435\u0440\u043D\u0443\u043B \u043D\u0435\u0434\u043E\u043F\u0443\u0441\u0442\u0438\u043C\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435.",
+    rootChanged: "\u041A\u043E\u0440\u0435\u043D\u044C OpenSpec \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0441\u044F.",
+    planningTargetChanged: "\u0426\u0435\u043B\u044C \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F OpenSpec \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0430\u0441\u044C.",
+    changeUnlisted: "\u0418\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0431\u043E\u043B\u044C\u0448\u0435 \u043D\u0435 \u0443\u043A\u0430\u0437\u0430\u043D\u043E \u0432 \u0441\u043F\u0438\u0441\u043A\u0435.",
+    contextChanged: "\u041A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 OpenSpec \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0441\u044F.",
+    readLimit: "\u0414\u043E\u0441\u0442\u0438\u0433\u043D\u0443\u0442 \u043B\u0438\u043C\u0438\u0442 \u0447\u0442\u0435\u043D\u0438\u044F \u0441\u0435\u0430\u043D\u0441\u0430. \u041E\u0431\u043D\u043E\u0432\u0438\u0442\u0435 \u0434\u0430\u043D\u043D\u044B\u0435, \u0447\u0442\u043E\u0431\u044B \u043E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u044B\u0435 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u044B \u0447\u0442\u0435\u043D\u0438\u044F.",
+    localReadFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0434\u0430\u043D\u043D\u044B\u0435 OpenSpec.",
+    createUnknown: "\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D; \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0438\u0441\u0445\u043E\u0434\u043D\u044B\u0439 \u043F\u0440\u043E\u0435\u043A\u0442 \u043F\u0435\u0440\u0435\u0434 \u043F\u043E\u0432\u0442\u043E\u0440\u043D\u043E\u0439 \u043F\u043E\u043F\u044B\u0442\u043A\u043E\u0439.",
+    createUnknownData: "\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D.",
+    deleteUnknown: "\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D; \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0438\u0441\u0445\u043E\u0434\u043D\u044B\u0439 \u043F\u0440\u043E\u0435\u043A\u0442 \u043F\u0435\u0440\u0435\u0434 \u043F\u043E\u0432\u0442\u043E\u0440\u043D\u043E\u0439 \u043F\u043E\u043F\u044B\u0442\u043A\u043E\u0439.",
+    language: "\u042F\u0437\u044B\u043A",
+    auto: "\u041A\u0430\u043A \u0432 OpenChamber",
+    invalidPreference: "\u0421\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u043E\u0435 \u0437\u043D\u0430\u0447\u0435\u043D\u0438\u0435 \u044F\u0437\u044B\u043A\u0430 \u043D\u0435\u0434\u043E\u043F\u0443\u0441\u0442\u0438\u043C\u043E. \u0412\u0440\u0435\u043C\u0435\u043D\u043D\u043E \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0435\u0442\u0441\u044F \u044F\u0437\u044B\u043A OpenChamber.",
+    readPreferenceFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0443 \u044F\u0437\u044B\u043A\u0430. \u0412\u0440\u0435\u043C\u0435\u043D\u043D\u043E \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0435\u0442\u0441\u044F \u044F\u0437\u044B\u043A OpenChamber.",
+    writePreferenceFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0443 \u044F\u0437\u044B\u043A\u0430. \u041F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0438\u0439 \u0432\u044B\u0431\u043E\u0440 \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0451\u043D.",
+    create: "\u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0437\u0430\u0433\u043E\u0442\u043E\u0432\u043A\u0443\u2026",
+    archiveAll: "\u0410\u0440\u0445\u0438\u0432\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0432\u0441\u0435",
+    refresh: "\u041E\u0431\u043D\u043E\u0432\u0438\u0442\u044C",
+    search: "\u041F\u043E\u0438\u0441\u043A \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439",
+    clearSearch: "\u041E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u043F\u043E\u0438\u0441\u043A",
+    help: "\u041A\u0440\u0430\u0442\u043A\u043E\u0435 \u0440\u0443\u043A\u043E\u0432\u043E\u0434\u0441\u0442\u0432\u043E OpenSpec",
+    helpDescription: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u043A\u0440\u0430\u0442\u043A\u043E\u0435 \u0440\u0443\u043A\u043E\u0432\u043E\u0434\u0441\u0442\u0432\u043E OpenSpec.",
+    createDescription: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0444\u043E\u0440\u043C\u0443 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u0437\u0430\u0433\u043E\u0442\u043E\u0432\u043A\u0438 \u0441 \u0438\u043C\u0435\u043D\u0435\u043C \u0438 \u0446\u0435\u043B\u044C\u044E; \u0437\u0430\u043F\u0440\u043E\u0441 \u0430\u0433\u0435\u043D\u0442\u0443 \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u044F\u0435\u0442\u0441\u044F.",
+    archiveDescription: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u0435 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u0441\u0435\u0430\u043D\u0441\u0430 \u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438 \u0442\u043E\u043B\u044C\u043A\u043E \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0445 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439; \u043D\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0435 \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u0441\u044F.",
+    refreshDescription: "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0430\u043A\u0442\u0443\u0430\u043B\u044C\u043D\u043E\u0435 \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435 \u0434\u043E\u0441\u043A\u0438 \u0431\u0435\u0437 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0444\u0430\u0439\u043B\u043E\u0432.",
+    retryDescription: "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0434\u043E\u0441\u043A\u0438, \u043D\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u044F \u0437\u0430\u043F\u0438\u0441\u044C.",
+    openChangeDescription: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u044B \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0437\u0430\u0434\u0430\u0447\u0438 \u044D\u0442\u043E\u0433\u043E \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F.",
+    exploreDescription: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u0440\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u0443\u0435\u043C\u044B\u0439, \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u0438\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u043D\u0438\u044F \u0431\u0435\u0437 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F \u0444\u0430\u0439\u043B\u043E\u0432.",
+    verifyDescription: "\u041F\u043E\u0434\u0433\u043E\u0442\u043E\u0432\u0438\u0442\u044C \u0440\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u0443\u0435\u043C\u044B\u0439, \u043D\u0435\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0439 \u0434\u0438\u0430\u0433\u043D\u043E\u0441\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0437\u0430\u043F\u0440\u043E\u0441 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0431\u0435\u0437 \u0440\u0435\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438 \u0438 \u0430\u0440\u0445\u0438\u0432\u0430\u0446\u0438\u0438.",
+    noProject: "\u041F\u0440\u043E\u0435\u043A\u0442 \u043D\u0435 \u0432\u044B\u0431\u0440\u0430\u043D",
+    selectProject: "\u0412\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u043F\u0440\u043E\u0435\u043A\u0442 \u0438\u043B\u0438 \u0440\u0430\u0431\u043E\u0447\u0435\u0435 \u0434\u0435\u0440\u0435\u0432\u043E OpenChamber \u0434\u043B\u044F \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0430 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439 OpenSpec.",
+    retry: "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C",
+    loading: "\u0417\u0430\u0433\u0440\u0443\u0437\u043A\u0430\u2026",
+    noMatches: "\u041F\u043E\u0434\u0445\u043E\u0434\u044F\u0449\u0438\u0445 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439 \u043D\u0435\u0442",
+    noChanges: "\u0417\u0434\u0435\u0441\u044C \u043F\u043E\u043A\u0430 \u043D\u0435\u0442 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439",
+    noTasks: "\u0417\u0430\u0434\u0430\u0447 \u043F\u043E\u043A\u0430 \u043D\u0435\u0442",
+    taskCompletion: "\u0412\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u0435 \u0437\u0430\u0434\u0430\u0447",
+    planningChanged: "\u0426\u0435\u043B\u044C \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0430\u0441\u044C. \u041E\u0431\u043D\u043E\u0432\u0438\u0442\u0435 \u0434\u043E\u0441\u043A\u0443 \u0434\u043B\u044F \u043D\u043E\u0432\u043E\u0433\u043E \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0430.",
+    inspectionUnavailable: "\u041D\u0430\u0431\u043B\u044E\u0434\u0430\u0435\u043C\u043E\u0435 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u0431\u043E\u043B\u044C\u0448\u0435 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u043E \u0434\u043B\u044F \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0430.",
+    boardLoadFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0434\u043E\u0441\u043A\u0443.",
+    stages: {
+      planning: "\u041F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0435",
+      ready: "\u0413\u043E\u0442\u043E\u0432\u043E \u043A \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044E",
+      progress: "\u0412 \u0440\u0430\u0431\u043E\u0442\u0435",
+      complete: "\u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043D\u043E"
+    },
+    artifacts: (done, total) => `${done} \u0438\u0437 ${total} ${plural(total, "\u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u0430", "\u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u043E\u0432", "\u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442\u043E\u0432")}`,
+    tasks: (done, total) => `${done} \u0438\u0437 ${total} ${plural(total, "\u0437\u0430\u0434\u0430\u0447\u0438", "\u0437\u0430\u0434\u0430\u0447", "\u0437\u0430\u0434\u0430\u0447")} \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u043E`,
+    tally: (count2, done, total) => `${count2} ${plural(count2, "\u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435", "\u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F", "\u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439")} \xB7 ${russian.tasks(done, total)}`,
+    unavailable: (id) => `${id} \u0431\u043E\u043B\u044C\u0448\u0435 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u043E.`,
+    stale: (id) => `${id}: \u0434\u0430\u043D\u043D\u044B\u0435 \u0443\u0441\u0442\u0430\u0440\u0435\u043B\u0438; \u0430\u043A\u0442\u0443\u0430\u043B\u044C\u043D\u0430\u044F \u0441\u0432\u043E\u0434\u043A\u0430 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430.`,
+    failures: (ids) => `${ids}: \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C. \u041E\u0431\u043D\u043E\u0432\u0438\u0442\u0435 \u0434\u043E\u0441\u043A\u0443, \u0447\u0442\u043E\u0431\u044B \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u043F\u043E\u043F\u044B\u0442\u043A\u0443.`
+  };
+  var uiText = (language) => language === "ru" ? russian : english;
+  var presentMessage = (text2, message) => typeof message === "string" ? message : message.key === "worktreeCollision" ? text2.worktreeCollision(message.name, message.directory, message.session) : text2[message.key];
+  function ownedError(error, key) {
+    return Object.assign(error, { localMessage: typeof key === "string" ? { key } : key });
+  }
+  function errorMessage(error, text2) {
+    return presentMessage(text2, describeError(error));
+  }
+  function describeError(error) {
+    return "localMessage" in error ? error.localMessage : error.message;
+  }
+
   // src/model.ts
   function requiredArtifactIds(change) {
     const byId = new Map(change.artifacts.map((artifact) => [artifact.id, artifact]));
@@ -1922,9 +2729,12 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     outcome;
   };
   function invalid() {
-    return new ServiceRequestError(
-      "BAD_SERVICE_DATA",
-      "The local OpenSpec service returned invalid data."
+    return ownedError(
+      new ServiceRequestError(
+        "BAD_SERVICE_DATA",
+        "The local OpenSpec service returned invalid data."
+      ),
+      "badServiceData"
     );
   }
   function createClient(host2) {
@@ -1968,9 +2778,15 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         });
         const listing = decode(value, decodeListing);
         if (listing.directory !== directory || expectedRoot && listing.root !== expectedRoot)
-          throw new ServiceRequestError("ROOT_CHANGED", "OpenSpec root changed.");
+          throw ownedError(
+            new ServiceRequestError("ROOT_CHANGED", "OpenSpec root changed."),
+            "rootChanged"
+          );
         if (expectedPlanning && listing.planning !== expectedPlanning)
-          throw new ServiceRequestError("PLANNING_CHANGED", "OpenSpec planning target changed.");
+          throw ownedError(
+            new ServiceRequestError("PLANNING_CHANGED", "OpenSpec planning target changed."),
+            "planningTargetChanged"
+          );
         return listing;
       },
       summaries: async (scope, entries2) => {
@@ -1983,16 +2799,25 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
           decodeSummaries
         );
         if (value.root !== scope.root)
-          throw new ServiceRequestError("ROOT_CHANGED", "OpenSpec root changed.");
+          throw ownedError(
+            new ServiceRequestError("ROOT_CHANGED", "OpenSpec root changed."),
+            "rootChanged"
+          );
         if (value.planning !== scope.planning)
-          throw new ServiceRequestError("PLANNING_CHANGED", "OpenSpec planning target changed.");
+          throw ownedError(
+            new ServiceRequestError("PLANNING_CHANGED", "OpenSpec planning target changed."),
+            "planningTargetChanged"
+          );
         const byId = new Map(value.changes.map((item) => [item.id, item]));
         return entries2.map((entry) => {
           const item = byId.get(entry.id);
           if (!item)
             return {
               id: entry.id,
-              error: new ServiceRequestError("CHANGE_UNAVAILABLE", "Change is no longer listed.")
+              error: ownedError(
+                new ServiceRequestError("CHANGE_UNAVAILABLE", "Change is no longer listed."),
+                "changeUnlisted"
+              )
             };
           if ("error" in item)
             return {
@@ -2050,17 +2875,19 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         } catch (caught) {
           if (caught instanceof ServiceRequestError && caught.outcome !== "unknown" && caught.code !== "BAD_SERVICE_DATA" && caught.code !== "CLI_TIMEOUT")
             throw caught;
-          throw new ServiceRequestError(
-            "CREATE_UNKNOWN",
-            "Creation outcome is unknown; check the original project before retrying.",
-            "unknown"
+          throw ownedError(
+            new ServiceRequestError(
+              "CREATE_UNKNOWN",
+              "Creation outcome is unknown; check the original project before retrying.",
+              "unknown"
+            ),
+            "createUnknown"
           );
         }
         if (value.root !== scope.root || value.change !== name)
-          throw new ServiceRequestError(
-            "BAD_SERVICE_DATA",
-            "Creation outcome is unknown.",
-            "unknown"
+          throw ownedError(
+            new ServiceRequestError("BAD_SERVICE_DATA", "Creation outcome is unknown.", "unknown"),
+            "createUnknownData"
           );
       },
       delete: async (scope, change) => {
@@ -2077,17 +2904,23 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         } catch (caught) {
           if (caught instanceof ServiceRequestError && caught.outcome !== "unknown" && caught.code !== "BAD_SERVICE_DATA")
             throw caught;
-          throw new ServiceRequestError(
-            "DELETE_UNKNOWN",
-            "Deletion outcome is unknown; check the original project before retrying.",
-            "unknown"
+          throw ownedError(
+            new ServiceRequestError(
+              "DELETE_UNKNOWN",
+              "Deletion outcome is unknown; check the original project before retrying.",
+              "unknown"
+            ),
+            "deleteUnknown"
           );
         }
         if (value.root !== scope.root || value.change !== change)
-          throw new ServiceRequestError(
-            "DELETE_UNKNOWN",
-            "Deletion outcome is unknown; check the original project before retrying.",
-            "unknown"
+          throw ownedError(
+            new ServiceRequestError(
+              "DELETE_UNKNOWN",
+              "Deletion outcome is unknown; check the original project before retrying.",
+              "unknown"
+            ),
+            "deleteUnknown"
           );
       }
     };
@@ -2122,7 +2955,11 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     function read(scope, key, load, retry = false) {
       if (!active2(scope))
         return {
-          state: { value: null, pending: false, error: new Error("OpenSpec context changed.") },
+          state: {
+            value: null,
+            pending: false,
+            error: ownedError(new Error("OpenSpec context changed."), "contextChanged")
+          },
           completion: null
         };
       let entry = cache.get(key);
@@ -2141,8 +2978,9 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
           if (started !== generation || !active2(scope) || cache.get(key) !== current) return;
           const size = new TextEncoder().encode(JSON.stringify(value)).length;
           if (bytes + size > maxBytes) {
-            current.error = new Error(
-              "Session read limit reached. Refresh to clear retained reads."
+            current.error = ownedError(
+              new Error("Session read limit reached. Refresh to clear retained reads."),
+              "readLimit"
             );
           } else {
             current.value = value;
@@ -2152,7 +2990,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         },
         (caught) => {
           if (started === generation && active2(scope) && cache.get(key) === current)
-            current.error = caught instanceof Error ? caught : new Error("OpenSpec read failed.");
+            current.error = caught instanceof Error ? caught : ownedError(new Error("OpenSpec read failed."), "localReadFailed");
         }
       ).then(() => {
         if (current.pending === completion) current.pending = null;
@@ -2197,150 +3035,6 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
       }
     };
   }
-
-  // src/panel/workflow.ts
-  var globalWorkflows = [
-    {
-      id: "propose",
-      label: "Propose change",
-      skill: "openspec-propose",
-      description: "Prepare an unsent prompt to define a new change and its planning artifacts."
-    },
-    {
-      id: "explore",
-      label: "Explore ideas",
-      skill: "openspec-explore",
-      description: "Prepare an unsent prompt to investigate ideas and trade-offs without file changes."
-    },
-    {
-      id: "new",
-      label: "New change",
-      skill: "openspec-new-change",
-      description: "Prepare an unsent prompt to start a new change step by step."
-    },
-    {
-      id: "ff",
-      label: "Fast-forward",
-      skill: "openspec-ff-change",
-      description: "Prepare an unsent prompt to create all planning artifacts for a new change."
-    },
-    {
-      id: "bulk-archive",
-      label: "Bulk archive",
-      skill: "openspec-bulk-archive-change",
-      description: "Prepare an unsent prompt to select changes, assess conflicts and confirm batch archiving."
-    },
-    {
-      id: "onboard",
-      label: "Onboard",
-      skill: "openspec-onboard",
-      description: "Prepare an unsent prompt for a guided full change cycle, with setup and task questions."
-    }
-  ];
-  function globalWorkflowPrompt(workflow) {
-    const { skill } = globalWorkflows.find(({ id }) => id === workflow);
-    const instruction = workflow === "bulk-archive" ? "Leave candidate selection, conflict assessment and batch confirmation to the workflow; do not preselect visible or completed changes." : workflow === "onboard" ? "Leave setup permission and onboarding task selection to the workflow and its user questions." : workflow === "explore" ? "Ask the user what ideas to explore. Investigate relevant context, options and trade-offs without file changes or implementation." : "Ask the user to establish their intended change; do not target or finish an existing change's scaffold.";
-    return `Use your skill tool to load and invoke the ${skill} skill.
-
-${instruction} Preserve the workflow's setup checks and required user questions. If the skill is unavailable, report that limitation rather than substituting another workflow.`;
-  }
-  var changeWorkflows = [
-    {
-      id: "continue",
-      label: "Continue change",
-      skill: "openspec-continue-change",
-      description: "Prepare an unsent prompt for at most one next planning artifact, not implementation."
-    },
-    {
-      id: "apply",
-      label: "Apply tasks",
-      skill: "openspec-apply-change",
-      description: "Prepare an unsent current-chat prompt to implement and verify remaining tasks."
-    },
-    {
-      id: "update",
-      label: "Update change",
-      skill: "openspec-update-change",
-      description: "Prepare an unsent prompt to revise planning artifacts without implementing tasks."
-    },
-    {
-      id: "sync",
-      label: "Sync specs",
-      skill: "openspec-sync-specs",
-      description: "Prepare an unsent prompt to synchronize delta specs with main specs without archiving."
-    },
-    {
-      id: "archive",
-      label: "Archive change",
-      skill: "openspec-archive-change",
-      description: "Prepare an unsent prompt to check archival prerequisites and request confirmation."
-    },
-    {
-      id: "verify",
-      label: "Verify change",
-      skill: "openspec-verify-change",
-      description: "Prepare an unsent prompt to report gaps against planning artifacts without fixing or archiving."
-    },
-    {
-      id: "explore",
-      label: "Explore ideas",
-      skill: "openspec-explore",
-      description: "Prepare an unsent prompt to investigate this change and trade-offs without file changes."
-    }
-  ];
-  function changeWorkflowPrompt(workflow, change) {
-    const target = `OpenSpec change "${change.id}"`;
-    const goal = change.goal?.trim() ? `
-Goal: ${change.goal}` : "";
-    const { skill } = changeWorkflows.find(({ id }) => id === workflow);
-    const invocation = `Use your skill tool to load and invoke the ${skill} skill for ${target}.`;
-    switch (workflow) {
-      case "continue":
-        return `${invocation}${goal}
-
-Inspect this existing change's status and follow the workflow's artefact instructions to create at most one next planning artefact. Preserve existing decisions and any recorded goal. If no goal is recorded, inspect existing context and ask the user to clarify it if necessary; do not invent a goal or write goal metadata automatically. Do not create another change or implement code. Leave complete planning and partially populated artefacts to the workflow; do not automatically Apply.`;
-      case "explore":
-        return `${invocation}${goal}
-
-Investigate the goal, relevant code, options and trade-offs for ${target}. Discuss findings without file changes or implementation. If no goal is recorded, inspect existing context and ask the user to clarify it if necessary; do not invent a goal.`;
-      case "apply": {
-        const progress = change.stage === "progress" ? `
-${change.completedTasks} of ${change.totalTasks} tasks complete. Pick up where implementation left off and complete the remaining tasks.` : "";
-        return `${invocation}${progress}
-
-Complete all remaining tasks in ${target}, then verify the implementation against its change artefacts. Resolve any issues found and verify again until all tasks are complete and verification passes. If blocked, report the blocker rather than marking unfinished work complete.`;
-      }
-      case "update":
-        return `${invocation}
-
-Review and revise this change's planning artefacts, preserving existing decisions and the recorded goal. Retain the workflow's required user confirmations. Do not implement tasks or archive the change.`;
-      case "sync":
-        return `${invocation}
-
-Synchronize this change's delta specs with the main specs using the workflow's prerequisite checks and required user questions. Do not implement tasks or archive the change afterward.`;
-      case "verify":
-        return `${invocation}
-
-Compare the implementation with this change's planning artefacts and report gaps and inconsistencies diagnostically, without implementation or archiving.`;
-      case "archive":
-        return `${invocation}
-
-Check the workflow's archival prerequisites and retain required user confirmations; do not assume prior verification or permission to archive.`;
-    }
-  }
-  function actionPrompt(change, intent) {
-    if (intent !== "primary") return changeWorkflowPrompt(intent, change);
-    const workflow = change.stage === "planning" ? "continue" : change.stage === "complete" ? "archive" : "apply";
-    return changeWorkflowPrompt(workflow, change);
-  }
-  var stages = [
-    { id: "planning", label: "Planning", action: "Continue artifacts" },
-    { id: "ready", label: "Ready", action: "Apply" },
-    { id: "progress", label: "In Progress", action: "Apply" },
-    { id: "complete", label: "Complete", action: "Archive" }
-  ];
-  var workflowLabel = (stage) => stages.find((item) => item.id === stage).action;
-  var stageLabel = (stage) => stages.find((item) => item.id === stage).label;
 
   // src/panel/help-button.ts
   var tooltipId = 0;
@@ -2424,8 +3118,8 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     root2.className = "help-control";
     const handle = mountButton(root2, { label: "", variant: "ghost", size: "sm", onClick });
     const button2 = root2.querySelector("button");
-    button2.setAttribute("aria-label", "OpenSpec quickstart");
-    const tooltip = mountTooltip(button2, "Open the OpenSpec quickstart guide.");
+    button2.setAttribute("aria-label", english.help);
+    const tooltip = mountTooltip(button2, english.helpDescription);
     const icon2 = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     icon2.setAttribute("viewBox", "0 0 24 24");
     icon2.setAttribute("width", "16");
@@ -2452,6 +3146,10 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     icon2.append(outline, hook, dot);
     button2.prepend(icon2);
     return {
+      update(label, description) {
+        button2.setAttribute("aria-label", label);
+        tooltip.update(description);
+      },
       dispose() {
         tooltip.dispose();
         handle.dispose();
@@ -2462,6 +3160,7 @@ Check the workflow's archival prerequisites and retain required user confirmatio
   // src/panel/primary-action.ts
   function mountWorkflowMenu(root2, items) {
     root2.classList.add("workflow-menu");
+    let currentItems = items;
     let state = null;
     let opened = null;
     const menu = mountMenu(root2, {
@@ -2472,7 +3171,7 @@ Check the workflow's archival prerequisites and retain required user confirmatio
       onSelect: (id) => {
         const captured = opened;
         opened = null;
-        const item = items.find((item2) => item2.id === id);
+        const item = currentItems.find((item2) => item2.id === id);
         if (captured && !captured.disabled && !state?.disabled && item) captured.action(item.id);
       }
     });
@@ -2487,11 +3186,12 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     };
     document.addEventListener("pointermove", rememberPointer);
     root2.addEventListener("pointerenter", stationaryEntry, true);
+    let describedActive = null;
     const descriptions = new MutationObserver(() => {
       const popup = root2.querySelector('[role="menu"]');
       if (!popup) return;
       popup.querySelectorAll('[role="menuitem"]').forEach((row, index) => {
-        const item = items[index];
+        const item = currentItems[index];
         let description = row.querySelector(".workflow-description");
         if (!description) {
           row.setAttribute("aria-label", item.label);
@@ -2509,7 +3209,8 @@ Check the workflow's archival prerequisites and retain required user confirmatio
       if (active2) popup.setAttribute("aria-describedby", `${active2.id}-outcome`);
       else popup.removeAttribute("aria-describedby");
       popup.style.maxHeight = `min(320px, calc(100vh - ${popup.getBoundingClientRect().top + 8}px))`;
-      active2?.scrollIntoView({ block: "nearest" });
+      if (active2?.id !== describedActive) active2?.scrollIntoView({ block: "nearest" });
+      describedActive = active2?.id ?? null;
     });
     descriptions.observe(root2, {
       subtree: true,
@@ -2528,11 +3229,17 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     return {
       update(next) {
         state = next;
+        const text2 = next.text ?? english;
+        currentItems = items.map((item) => ({ ...item, ...next.labels?.[item.id] }));
+        const popup = root2.querySelector('[role="menu"]');
+        const scroll = popup?.scrollTop;
         menu.update({
-          items: items.map(({ id, label }) => ({ id, label, disabled: next.disabled }))
+          label: text2.workflows,
+          items: currentItems.map(({ id, label }) => ({ id, label, disabled: next.disabled }))
         });
+        if (popup && scroll !== void 0) popup.scrollTop = scroll;
         trigger.disabled = next.disabled;
-        tooltip.update();
+        tooltip.update(text2.workflowsDescription);
       },
       dispose() {
         descriptions.disconnect();
@@ -2582,18 +3289,20 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     return {
       update(next) {
         state = next;
+        const text2 = next.text ?? english;
         tooltip.update(
-          next.stage === "planning" ? "Prepare an editable, unsent prompt for at most one next planning artifact; do not implement tasks." : "Prepare an editable, unsent archive prompt in the current chat; this does not archive directly."
+          next.stage === "planning" ? text2.continueDescription : text2.primaryArchiveDescription
         );
-        menuTooltip.update();
+        menuTooltip.update(text2.applyDestinationDescription);
         const apply3 = next.stage === "ready" || next.stage === "progress";
         buttonRoot.hidden = apply3;
         menuRoot.hidden = !apply3;
-        button2.update({ label: workflowLabel(next.stage), disabled: next.disabled });
+        button2.update({ label: text2.workflowActions[next.stage], disabled: next.disabled });
         menu.update({
+          label: text2.workflowActions.ready,
           items: [
-            { id: "current", label: "Prepare in current chat", disabled: next.disabled },
-            { id: "worktree", label: "Run in new worktree", disabled: next.disabled || next.pending }
+            { id: "current", label: text2.currentChat, disabled: next.disabled },
+            { id: "worktree", label: text2.newWorktree, disabled: next.disabled || next.pending }
           ]
         });
         trigger.disabled = next.disabled;
@@ -2670,6 +3379,7 @@ Check the workflow's archival prerequisites and retain required user confirmatio
 
   // src/panel/board-view.ts
   function mountBoardView(root2, callbacks) {
+    let text2 = english;
     const main = document.createElement("div");
     main.className = "board-shell";
     const header = document.createElement("header");
@@ -2683,7 +3393,7 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     headingActions.className = "heading-actions";
     const newChangeRoot = document.createElement("span");
     const newChange = mountButton(newChangeRoot, {
-      label: "Create scaffold\u2026",
+      label: text2.create,
       variant: "default",
       size: "sm",
       disabled: true,
@@ -2692,7 +3402,7 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     addButtonIcon(newChangeRoot, "create");
     const archiveRoot = document.createElement("span");
     const archive = mountButton(archiveRoot, {
-      label: "Archive all",
+      label: text2.archiveAll,
       variant: "secondary",
       size: "sm",
       disabled: true,
@@ -2708,7 +3418,7 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     const refreshRoot = document.createElement("span");
     refreshRoot.className = "refresh-control";
     const refresh = mountButton(refreshRoot, {
-      label: "Refresh",
+      label: text2.refresh,
       variant: "ghost",
       size: "sm",
       onClick: callbacks.retry
@@ -2717,18 +3427,9 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     const helpRoot = document.createElement("span");
     const help = mountHelpButton(helpRoot, callbacks.help);
     const tooltips = [
-      mountTooltip(
-        newChangeRoot.querySelector("button"),
-        "Open a form that directly creates a scaffold with its name and goal; no agent prompt is sent."
-      ),
-      mountTooltip(
-        archiveRoot.querySelector("button"),
-        "Open confirmation to create a new session and submit an archive prompt for completed changes only; unfinished changes are skipped."
-      ),
-      mountTooltip(
-        refreshRoot.querySelector("button"),
-        "Read the latest board state without changing files."
-      )
+      mountTooltip(newChangeRoot.querySelector("button"), text2.createDescription),
+      mountTooltip(archiveRoot.querySelector("button"), text2.archiveDescription),
+      mountTooltip(refreshRoot.querySelector("button"), text2.refreshDescription)
     ];
     const workflowRoot = document.createElement("span");
     const workflows = mountWorkflowMenu(workflowRoot, globalWorkflows);
@@ -2738,10 +3439,9 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     let searchValue = "";
     const search = mountSearchField(searchRoot, {
       value: "",
-      placeholder: "Search changes",
-      label: "Search changes",
+      placeholder: text2.search,
+      label: text2.search,
       onChange: (value) => {
-        searchValue = value;
         callbacks.search(value);
       }
     });
@@ -2770,25 +3470,27 @@ Check the workflow's archival prerequisites and retain required user confirmatio
     root2.append(main);
     let noticesMounted = [];
     let noticeSignature = "";
+    let noticeUpdates = [];
     const cards = /* @__PURE__ */ new Map();
-    function addAction(target, label) {
+    function addAction(target) {
       const mount = document.createElement("span");
       target.append(mount);
       const button2 = mountButton(mount, {
-        label,
+        label: text2.retry,
         variant: "secondary",
         size: "sm",
         onClick: callbacks.retry
       });
-      const tooltip = mountTooltip(
-        mount.querySelector("button"),
-        "Retry reading the board; do not repeat any write."
-      );
+      const tooltip = mountTooltip(mount.querySelector("button"), text2.retryDescription);
       noticesMounted.push({
         dispose() {
           tooltip.dispose();
           button2.dispose();
         }
+      });
+      noticeUpdates.push(() => {
+        button2.update({ label: text2.retry });
+        tooltip.update(text2.retryDescription);
       });
     }
     function cardFor(item) {
@@ -2802,7 +3504,7 @@ Check the workflow's archival prerequisites and retain required user confirmatio
         const progressLabel = document.createElement("p");
         progressLabel.className = "progress-label";
         const progressRoot = document.createElement("div");
-        const progress = mountProgress(progressRoot, { value: 0, label: "Task completion" });
+        const progress = mountProgress(progressRoot, { value: 0, label: text2.taskCompletion });
         const actionRoot = document.createElement("span");
         actionRoot.className = "card-actions";
         const id = item.change.id;
@@ -2833,15 +3535,9 @@ Check the workflow's archival prerequisites and retain required user confirmatio
         node.append(progressLabel, progressRoot, actionRoot, status);
         entry = {
           tooltips: [
-            mountTooltip(title, "Open this change's planning documents and tasks."),
-            mountTooltip(
-              exploreRoot.querySelector("button"),
-              "Prepare an editable, unsent exploration prompt without file changes."
-            ),
-            mountTooltip(
-              verifyRoot.querySelector("button"),
-              "Prepare an editable, unsent diagnostic verification prompt; do not implement or archive."
-            )
+            mountTooltip(title, text2.openChangeDescription),
+            mountTooltip(exploreRoot.querySelector("button"), text2.exploreDescription),
+            mountTooltip(verifyRoot.querySelector("button"), text2.verifyDescription)
           ],
           node,
           title,
@@ -2861,33 +3557,42 @@ Check the workflow's archival prerequisites and retain required user confirmatio
         cards.set(id, entry);
       }
       entry.current = item;
-      entry.tooltips.forEach((tooltip) => tooltip.update());
+      entry.tooltips.forEach(
+        (tooltip, index) => tooltip.update(
+          [text2.openChangeDescription, text2.exploreDescription, text2.verifyDescription][index]
+        )
+      );
       const change = item.change;
       if (entry.title.textContent !== change.id) entry.title.textContent = change.id;
       entry.areas.update(change.affectedAreas);
-      const label = `${change.completedArtifacts} of ${change.totalArtifacts} artefacts${change.totalTasks === 0 ? " \xB7 No tasks yet" : ""}`;
+      const label = `${text2.artifacts(change.completedArtifacts, change.totalArtifacts)}${change.totalTasks === 0 ? ` \xB7 ${text2.noTasks}` : ""}`;
       if (entry.progressLabel.textContent !== label) entry.progressLabel.textContent = label;
       entry.progressRoot.hidden = !change.totalTasks;
       entry.progress.update({
         value: change.totalTasks ? Math.round(100 * change.completedTasks / change.totalTasks) : 0,
-        label: `${change.completedTasks} of ${change.totalTasks} tasks complete`
+        label: text2.tasks(change.completedTasks, change.totalTasks)
       });
       entry.action.update({
+        text: text2,
         id: change.id,
         stage: change.stage,
         disabled: item.unavailable,
         pending: item.pending,
         action: item.action
       });
-      entry.explore.update({ disabled: item.unavailable });
-      entry.workflows.update({ disabled: item.unavailable, action: item.workflow });
+      entry.explore.update({ label: text2.explore, disabled: item.unavailable });
+      entry.workflows.update({
+        text: text2,
+        labels: text2.changeWorkflows,
+        disabled: item.unavailable,
+        action: item.workflow
+      });
       entry.exploreRoot.hidden = change.stage !== "planning";
       entry.verifyRoot.hidden = change.stage !== "complete";
-      entry.verify.update({ disabled: item.unavailable });
+      entry.verify.update({ label: text2.verify, disabled: item.unavailable });
       entry.status.hidden = !item.stale && !item.unavailable;
-      if (item.unavailable) entry.status.textContent = `${change.id} is no longer available.`;
-      else if (item.stale)
-        entry.status.textContent = `${change.id} is stale; latest summary unavailable.`;
+      if (item.unavailable) entry.status.textContent = text2.unavailable(change.id);
+      else if (item.stale) entry.status.textContent = text2.stale(change.id);
       return entry.node;
     }
     return {
@@ -2896,17 +3601,38 @@ Check the workflow's archival prerequisites and retain required user confirmatio
         tooltips.forEach((tooltip) => tooltip.update());
       },
       update(state) {
-        tooltips.forEach((tooltip) => tooltip.update());
-        workflows.update({ disabled: !state.directory, action: state.workflow });
-        project.textContent = state.directory?.split("/").filter(Boolean).at(-1) ?? "No project selected";
-        newChange.update({ disabled: !state.canCreate });
-        archive.update({ disabled: !state.canArchive, loading: state.archivePending });
+        text2 = state.text;
+        tooltips.forEach(
+          (tooltip, index) => tooltip.update(
+            [text2.createDescription, text2.archiveDescription, text2.refreshDescription][index]
+          )
+        );
+        help.update(text2.help, text2.helpDescription);
+        workflows.update({
+          text: text2,
+          labels: text2.globalWorkflows,
+          disabled: !state.directory,
+          action: state.workflow
+        });
+        project.textContent = state.directory?.split("/").filter(Boolean).at(-1) ?? text2.noProject;
+        newChange.update({ label: text2.create, disabled: !state.canCreate });
+        archive.update({
+          label: text2.archiveAll,
+          disabled: !state.canArchive,
+          loading: state.archivePending
+        });
+        const searchProps = {
+          label: text2.search,
+          placeholder: text2.search
+        };
         if (searchValue !== state.search) {
           searchValue = state.search;
-          search.update({ value: searchValue });
+          searchProps.value = searchValue;
         }
-        tally.textContent = `${state.listedCount} changes \xB7 ${state.completedTasks} of ${state.totalTasks} tasks complete`;
-        refresh.update({ disabled: !state.directory, loading: state.loading });
+        search.update(searchProps);
+        searchRoot.querySelector(".oc-sdk-search-clear")?.setAttribute("aria-label", text2.clearSearch);
+        tally.textContent = text2.tally(state.listedCount, state.completedTasks, state.totalTasks);
+        refresh.update({ label: text2.refresh, disabled: !state.directory, loading: state.loading });
         const nextNoticeSignature = JSON.stringify([
           !!state.directory,
           state.error,
@@ -2916,32 +3642,42 @@ Check the workflow's archival prerequisites and retain required user confirmatio
           noticeSignature = nextNoticeSignature;
           noticesMounted.forEach((handle) => handle.dispose());
           noticesMounted = [];
+          noticeUpdates = [];
           notices.replaceChildren();
           if (!state.directory) {
             const notice = document.createElement("p");
             notice.className = "notice";
-            notice.textContent = "Select an OpenChamber project or worktree to view its OpenSpec changes.";
+            noticeUpdates.push(() => {
+              notice.textContent = text2.selectProject;
+            });
             notices.append(notice);
           }
           if (state.error) {
             const notice = document.createElement("div");
             notice.className = "notice error";
             const message = document.createElement("span");
-            message.textContent = state.error;
+            const error = state.error;
+            noticeUpdates.push(() => {
+              message.textContent = presentMessage(text2, error);
+            });
             notice.append(message);
-            addAction(notice, "Retry");
+            addAction(notice);
             notices.append(notice);
           }
           if (state.failures.length) {
             const notice = document.createElement("div");
             notice.className = "notice";
             const message = document.createElement("span");
-            message.textContent = `${state.failures.map(({ id }) => id).join(", ")} could not be read. Refresh to try again.`;
+            const ids2 = state.failures.map(({ id }) => id).join(", ");
+            noticeUpdates.push(() => {
+              message.textContent = text2.failures(ids2);
+            });
             notice.append(message);
-            addAction(notice, "Retry");
+            addAction(notice);
             notices.append(notice);
           }
         }
+        noticeUpdates.forEach((update) => update());
         const ids = new Set(state.cards.map(({ change }) => change.id));
         for (const [id, entry] of cards) {
           if (ids.has(id)) continue;
@@ -2965,12 +3701,12 @@ Check the workflow's archival prerequisites and retain required user confirmatio
           const matching = state.cards.filter(
             ({ change }) => change.stage === stage.id && `${change.id} ${change.goal ?? ""}`.toLocaleLowerCase().includes(query)
           ).sort((a, b) => a.change.id < b.change.id ? -1 : a.change.id > b.change.id ? 1 : 0);
-          label.textContent = `${stage.label} ${matching.length}`;
+          label.textContent = `${text2.stages[stage.id]} ${matching.length}`;
           for (const child of [...grid.children]) {
             if (child !== empty && !matching.some((item) => cards.get(item.change.id)?.node === child))
               child.remove();
           }
-          empty.textContent = state.loading && !state.settled && state.pendingSummaries ? "Loading\u2026" : query ? "No matching changes" : "No changes here";
+          empty.textContent = state.loading && !state.cards.length ? text2.loading : query ? text2.noMatches : text2.noChanges;
           if (!matching.length) {
             if (empty.parentElement !== grid) grid.append(empty);
           } else empty.remove();
@@ -6318,7 +7054,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           return `<pre><code>${escape(text2)}</code></pre>`;
         },
         html: ({ text: text2 }) => escape(text2),
-        image: ({ text: text2 }) => escape(text2 || "Image"),
+        image: ({ text: text2 }) => text2 ? escape(text2) : '<span class="document-image-placeholder">Image</span>',
         link({ href, tokens }) {
           const label = this.parser.parseInline(tokens);
           if (!/^https?:\/\//i.test(href) && !href.startsWith("#")) return label;
@@ -6354,9 +7090,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         "pre",
         "code",
         "a",
-        "input"
+        "input",
+        "span"
       ],
-      ALLOWED_ATTR: ["href", "type", "disabled", "checked", "start"],
+      ALLOWED_ATTR: ["href", "type", "disabled", "checked", "start", "class"],
       ALLOW_DATA_ATTR: false
     });
     for (const link of fragment.querySelectorAll("a[href]")) {
@@ -6375,7 +7112,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       if (input.type !== "checkbox") input.remove();
       else {
         input.disabled = true;
-        input.setAttribute("aria-label", input.parentElement?.textContent?.trim() || "Document task");
+        const label = input.parentElement?.textContent?.trim();
+        input.setAttribute("aria-label", label || "Document task");
       }
     }
     for (const table of fragment.querySelectorAll("table")) {
@@ -6439,7 +7177,9 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     let renderingFailed = false;
     return {
       update(next) {
-        tooltip.update();
+        const text2 = next.uiText ?? english;
+        tooltip.update(text2.retryDocumentDescription);
+        presentationIssue.textContent = text2.renderingFailed;
         if (next.hasContent && (displayed !== next.text || format !== (next.format ?? "text"))) {
           renderingFailed = false;
           try {
@@ -6453,12 +7193,18 @@ Please report this to https://github.com/markedjs/marked.`, e) {
             const pre = document.createElement("pre");
             pre.textContent = next.text;
             content.replaceChildren(pre);
-            presentationIssue.textContent = "Document rendering failed. Original source is shown.";
             renderingFailed = true;
           }
           displayed = next.text;
           format = next.format ?? "text";
         }
+        for (const image of content.querySelectorAll(".document-image-placeholder"))
+          if (image.textContent !== text2.documentImage) image.textContent = text2.documentImage;
+        for (const input of content.querySelectorAll('input[type="checkbox"]'))
+          input.setAttribute(
+            "aria-label",
+            input.parentElement?.textContent?.trim() || text2.documentTask
+          );
         const hasContent = next.hasContent || displayed !== null && !!next.status && !next.error;
         content.hidden = !hasContent;
         presentationIssue.hidden = !next.hasContent || !renderingFailed;
@@ -6468,7 +7214,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         issue.hidden = !next.error;
         retryRoot.hidden = !next.error;
         onRetry = next.retry;
-        retry.update({ disabled: !next.canRetry });
+        retry.update({ label: text2.retryDocument, disabled: !next.canRetry });
       },
       dispose() {
         tooltip.dispose();
@@ -6510,18 +7256,19 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       list.replaceChildren();
     }
     return {
-      update(state, retryable = true, emptyMessage = "") {
-        tooltip.update();
+      update(state, retryable = true, emptyMessage = "", text2 = english) {
+        tooltip.update(text2.retryTasksDescription);
+        retry.update({ label: text2.retryTasks });
         const tasks = state?.value ?? [];
         const completed = tasks.filter((task) => task.done).length;
-        summary.textContent = tasks.length || state?.error || !retryable ? "" : state?.pending ? "Loading tasks\u2026" : emptyMessage || "No tasks tracked yet.";
+        summary.textContent = tasks.length || state?.error || !retryable ? "" : state?.pending ? text2.loadingTasks : emptyMessage || text2.noTrackedTasks;
         summary.hidden = !summary.textContent;
         progressRoot.hidden = !tasks.length;
         progress.update({
           value: tasks.length ? Math.round(completed / tasks.length * 100) : 0,
-          label: tasks.length ? `${completed} of ${tasks.length} tasks complete` : "Task completion"
+          label: tasks.length ? text2.tasks(completed, tasks.length) : text2.taskCompletion
         });
-        issue.textContent = retryable ? state?.error?.message ?? "" : "";
+        issue.textContent = retryable && state?.error ? errorMessage(state.error, text2) : "";
         issue.hidden = !issue.textContent;
         retryRoot.hidden = !state?.error || !retryable;
         const ids = new Set(tasks.map((task) => task.id));
@@ -6546,7 +7293,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           }
           item.row.classList.toggle("done", task.done);
           item.mark.textContent = task.done ? "\u2713" : "\u25CB";
-          item.mark.setAttribute("aria-label", task.done ? "Complete" : "Pending");
+          item.mark.setAttribute("aria-label", task.done ? text2.taskComplete : text2.taskPending);
           item.label.textContent = task.description;
           if (list.children[index] !== item.row)
             list.insertBefore(item.row, list.children[index] ?? null);
@@ -6569,18 +7316,6 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     ready: "info",
     progress: "primary",
     complete: "success"
-  };
-  var artifactLabels = {
-    proposal: "Proposal",
-    specs: "Specs",
-    design: "Design",
-    tasks: "Tasks"
-  };
-  var readiness = {
-    done: "Written",
-    ready: "Ready to write",
-    blocked: "Blocked",
-    skipped: "Skipped"
   };
   var tabId = (id) => `artifact:${id}`;
   var fallbackId = "tasks:fallback";
@@ -6771,6 +7506,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     let changeId = "";
     let artifactId = "";
     let scrollSelection = "";
+    let previousText = english;
     function reset() {
       areas.update([]);
       tasksView.reset();
@@ -6808,33 +7544,60 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     }
     return {
       update(state) {
-        tooltips.forEach((tooltip) => tooltip.update());
         shell.hidden = !state;
         if (!state) {
+          tooltips.forEach((tooltip) => tooltip.update());
           workflows.update({ disabled: true, action: () => {
           } });
           reset();
           changeId = "";
           return;
         }
+        const text2 = state.text;
+        const retainedScroll = content.scrollTop;
+        const languageChanged = text2 !== previousText;
+        const selection2 = window.getSelection();
+        const retainedRange = languageChanged && selection2?.rangeCount && content.contains(selection2.anchorNode) && content.contains(selection2.focusNode) ? selection2.getRangeAt(0).cloneRange() : null;
+        previousText = text2;
+        tooltips.forEach(
+          (tooltip, index) => tooltip.update(
+            [
+              text2.backDescription,
+              text2.copyDescription,
+              text2.detailRefreshDescription,
+              text2.deleteDescription,
+              text2.detailRetryDescription,
+              text2.exploreDescription,
+              text2.verifyDescription
+            ][index]
+          )
+        );
+        backButton.setAttribute("aria-label", text2.back);
+        copyButton.setAttribute("aria-label", text2.copyName);
+        deleteButton.setAttribute("aria-label", text2.deleteChange);
+        goal.setAttribute("aria-label", text2.recordedObjective);
+        tabs.setAttribute("aria-label", text2.planningArtifacts);
+        tabs.querySelector("[role=tablist]")?.setAttribute("aria-label", text2.planningArtifacts);
         if (changeId !== state.change.id) {
           reset();
           changeId = state.change.id;
         }
         title.textContent = state.change.id;
         areas.update(state.change.affectedAreas);
-        goal.textContent = state.change.goal ?? "Goal unavailable";
+        if (goal.textContent !== (state.change.goal ?? text2.goalUnavailable))
+          goal.textContent = state.change.goal ?? text2.goalUnavailable;
         stageBadge.update({
-          label: stageLabel(state.change.stage),
+          label: text2.stages[state.change.stage],
           tone: tones[state.change.stage]
         });
         unavailable.hidden = !state.unavailable;
-        unavailable.textContent = state.unavailable ? "This change is no longer available. Refresh or return to the board." : "";
-        refresh.update({ loading: state.loading });
+        unavailable.textContent = state.unavailable ? text2.detailUnavailable : "";
+        refresh.update({ label: text2.refresh, loading: state.loading });
         refreshMessage.textContent = state.refreshError ?? "";
         refreshIssue.hidden = !state.refreshError;
-        retry.update({ disabled: state.loading });
+        retry.update({ label: text2.retry, disabled: state.loading });
         action.update({
+          text: text2,
           id: state.change.id,
           stage: state.change.stage,
           disabled: state.unavailable,
@@ -6842,35 +7605,45 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           action: state.primaryAction
         });
         exploreRoot.hidden = state.change.stage !== "planning";
-        workflows.update({ disabled: state.unavailable, action: state.workflow });
-        explore.update({ disabled: state.unavailable });
-        deleteAction.update({ disabled: state.unavailable });
+        workflows.update({
+          text: text2,
+          labels: text2.changeWorkflows,
+          disabled: state.unavailable,
+          action: state.workflow
+        });
+        explore.update({ label: text2.explore, disabled: state.unavailable });
+        deleteAction.update({ label: text2.delete, disabled: state.unavailable });
         verifyRoot.hidden = state.change.stage !== "complete";
-        verify.update({ disabled: state.unavailable });
+        verify.update({ label: text2.verify, disabled: state.unavailable });
         currentOwner = taskArtifact(state.change);
         const items = state.change.artifacts.map((item) => ({
           id: tabId(item.id),
-          label: artifactLabels[item.id] ?? item.id,
+          label: text2.artifactLabels[item.id] ?? item.id,
           count: item.id === "specs" ? (state.change.documents ?? []).filter((document2) => document2.artifactId === item.id).length : item.id === currentOwner ? state.change.totalTasks : void 0
         }));
         if (!currentOwner)
-          items.push({ id: fallbackId, label: "Tasks", count: state.change.totalTasks });
+          items.push({
+            id: fallbackId,
+            label: text2.artifactLabels.tasks,
+            count: state.change.totalTasks
+          });
         const activeId = state.activeView === "tasks" ? currentOwner ? tabId(currentOwner) : fallbackId : tabId(state.selectedArtifact);
         const signature = JSON.stringify([items, activeId]);
         if (signature !== tabSignature) {
-          const focused = tabs.contains(document.activeElement);
+          const focused = tabs.contains(document.activeElement) ? document.activeElement.dataset.id : null;
           tabControl.update({ items, activeId });
           tabSignature = signature;
           tabs.querySelectorAll("[role=tab]").forEach((tab, index) => {
             tab.id = `change-detail-tab-${index}`;
             tab.setAttribute("aria-controls", content.id);
           });
-          if (focused) tabs.querySelector('[role=tab][aria-selected="true"]')?.focus();
+          if (focused)
+            tabs.querySelector(`[role=tab][data-id="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
         }
         tabs.querySelectorAll("[role=tab]").forEach((tab, index) => {
           const artifact = state.change.artifacts[index];
           if (!artifact) return;
-          const label = `${items[index].label} \xB7 ${readiness[artifact.status]}${items[index].count === void 0 ? "" : ` ${items[index].count}`}`;
+          const label = `${items[index].label} \xB7 ${text2.readiness[artifact.status]}${items[index].count === void 0 ? "" : ` ${items[index].count}`}`;
           if (tab.getAttribute("aria-label") !== label) tab.setAttribute("aria-label", label);
         });
         content.setAttribute(
@@ -6884,11 +7657,11 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           const prerequisite = state.change.artifacts.find((item) => item.id === id);
           return prerequisite && prerequisite.status !== "done" && prerequisite.status !== "skipped";
         }) ?? [];
-        const readinessMessage = selected?.status === "ready" ? "Ready to write this artefact. Continue planning in chat." : selected?.status === "blocked" ? unresolved.length ? `Blocked until ${unresolved.join(", ")} is written or skipped.` : "Blocked by planning prerequisites; their details are not available." : selected?.status === "skipped" ? "This artefact was skipped." : "";
+        const readinessMessage = selected?.status === "ready" ? text2.readyToWrite : selected?.status === "blocked" ? unresolved.length ? text2.blockedUntil(unresolved) : text2.blockedUnknown : selected?.status === "skipped" ? text2.skippedArtifact : "";
         documents.hidden = state.activeView === "tasks";
         tasks.hidden = state.activeView !== "tasks";
         if (state.activeView === "tasks" && !state.refreshError)
-          tasksView.update(state.tasks, !state.unavailable, readinessMessage);
+          tasksView.update(state.tasks, !state.unavailable, readinessMessage, text2);
         const nextScrollSelection = `${state.activeView}:${state.selectedArtifact}`;
         if (scrollSelection !== nextScrollSelection) {
           scrollSelection = nextScrollSelection;
@@ -6901,7 +7674,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         const available = (state.change.documents ?? []).filter(
           (item) => item.artifactId === state.selectedArtifact
         );
-        readinessNote.textContent = state.activeView === "document" && !state.unavailable && !available.length ? readinessMessage || (state.selectedArtifact ? "This artefact has no available documents yet." : "This change has no available planning documents.") : "";
+        readinessNote.textContent = state.activeView === "document" && !state.unavailable && !available.length ? readinessMessage || (state.selectedArtifact ? text2.noArtifactDocuments : text2.noPlanningDocuments) : "";
         readinessNote.hidden = !!state.refreshError || !readinessNote.textContent;
         content.hidden = !!state.refreshError;
         const multi = state.selectedArtifact === "specs" || available.length > 1;
@@ -6916,14 +7689,15 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           const key = documentKey(descriptor.artifactId, descriptor.selector);
           const entry = file(descriptor);
           const status = entry.node.querySelector("summary .document-status");
-          if (status) status.textContent = state.files.get(key)?.error ? " \xB7 Read failed" : "";
+          if (status) status.textContent = state.files.get(key)?.error ? text2.readFailed : "";
           const current2 = state.files.get(key);
           entry.view.update({
+            uiText: text2,
             text: current2?.value ?? "",
             format: documentFormat(descriptor.selector),
             hasContent: current2?.value !== null && !!current2,
-            status: !state.unavailable && !current2?.error && current2?.value == null ? "Loading document\u2026" : null,
-            error: state.unavailable ? null : current2?.error?.message ?? null,
+            status: !state.unavailable && !current2?.error && current2?.value == null ? text2.loadingDocument : null,
+            error: !state.unavailable && current2?.error ? errorMessage(current2.error, text2) : null,
             retry: () => callbacks.retryDocument(descriptor.artifactId, descriptor.selector),
             canRetry: !state.unavailable
           });
@@ -6931,6 +7705,11 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           if (!multi) entry.node.open = true;
           if (documents.children[index] !== entry.node)
             documents.insertBefore(entry.node, documents.children[index] ?? null);
+        }
+        if (languageChanged) content.scrollTop = retainedScroll;
+        if (retainedRange && selection2) {
+          selection2.removeAllRanges();
+          selection2.addRange(retainedRange);
         }
       },
       dispose() {
@@ -6956,12 +7735,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 
   // src/panel/create-dialog.ts
   function mountCreateDialog(client, callbacks) {
+    let text2 = english;
     const dialog = document.createElement("dialog");
     const form = document.createElement("form");
     const heading = document.createElement("h2");
     heading.id = "new-change-title";
     dialog.setAttribute("aria-labelledby", heading.id);
-    heading.textContent = "New change";
     const nameRoot = document.createElement("div");
     const goalRoot = document.createElement("div");
     let name = "";
@@ -6970,26 +7749,30 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     let attempt = null;
     let draftScope = null;
     let messageText = "";
+    let nameInvalid = false;
+    let goalInvalid = false;
     let generation = 0;
     let disposed = false;
     const nameField = mountTextField(nameRoot, {
-      label: "Change name",
+      label: text2.changeName,
       value: "",
-      placeholder: "add-change-board",
+      placeholder: text2.namePlaceholder,
       mono: true,
       onChange: (value) => {
         name = value;
+        nameInvalid = false;
         nameField.update({ value, error: void 0 });
       }
     });
     const goalField = mountTextField(goalRoot, {
-      label: "Goal",
+      label: text2.goal,
       value: "",
-      placeholder: "What should this change make possible?",
+      placeholder: text2.goalPlaceholder,
       multiline: true,
       rows: 4,
       onChange: (value) => {
         goal = value;
+        goalInvalid = false;
         goalField.update({ value, error: void 0 });
       }
     });
@@ -7003,26 +7786,26 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     const inspectRoot = document.createElement("span");
     const forgetRoot = document.createElement("span");
     const dismiss = mountButton(cancelRoot, {
-      label: "Cancel",
+      label: text2.cancel,
       variant: "secondary",
       size: "sm",
       onClick: () => dialog.close()
     });
     const submit = mountButton(submitRoot, {
-      label: "Create",
+      label: text2.createSubmit,
       variant: "default",
       size: "sm",
       onClick: () => void submitChange()
     });
     addButtonIcon(submitRoot, "create");
     const retry = mountButton(retryRoot, {
-      label: "Retry read",
+      label: text2.retryRead,
       variant: "secondary",
       size: "sm",
       onClick: () => void reconcile()
     });
     const inspect = mountButton(inspectRoot, {
-      label: "Inspect change",
+      label: text2.inspectChange,
       variant: "secondary",
       size: "sm",
       onClick: () => {
@@ -7032,7 +7815,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       }
     });
     const forget = mountButton(forgetRoot, {
-      label: "Dismiss attempt",
+      label: text2.dismissAttempt,
       variant: "ghost",
       size: "sm",
       onClick: () => {
@@ -7045,7 +7828,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           discardDraft();
           if (mode === "read-failed") {
             attempt = originalAttempt;
-            messageText = "Creation outcome is unknown. Retry the read before creating again.";
+            messageText = (text3) => text3.createReadRequired;
           } else mode = "editing";
           dialog.close();
           return;
@@ -7058,26 +7841,11 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     });
     actions2.append(cancelRoot, forgetRoot, retryRoot, inspectRoot, submitRoot);
     const tooltips = [
-      mountTooltip(
-        cancelRoot.querySelector("button"),
-        "Close this form without creating another scaffold."
-      ),
-      mountTooltip(
-        submitRoot.querySelector("button"),
-        "Directly create the named scaffold and recorded goal in the original project; no agent is launched."
-      ),
-      mountTooltip(
-        retryRoot.querySelector("button"),
-        "Read the original project to check the uncertain creation outcome; do not retry creation."
-      ),
-      mountTooltip(
-        inspectRoot.querySelector("button"),
-        "Open the observed change for inspection; this does not confirm that creation succeeded."
-      ),
-      mountTooltip(
-        forgetRoot.querySelector("button"),
-        "Dismiss this attempt without retrying creation or removing any existing change."
-      )
+      mountTooltip(cancelRoot.querySelector("button"), text2.createCloseDescription),
+      mountTooltip(submitRoot.querySelector("button"), text2.createSubmitDescription),
+      mountTooltip(retryRoot.querySelector("button"), text2.createRetryDescription),
+      mountTooltip(inspectRoot.querySelector("button"), text2.inspectDescription),
+      mountTooltip(forgetRoot.querySelector("button"), text2.dismissDescription)
     ];
     form.append(heading, nameRoot, goalRoot, message, actions2);
     form.addEventListener("submit", (event) => {
@@ -7095,6 +7863,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       name = "";
       goal = "";
       messageText = "";
+      nameInvalid = goalInvalid = false;
       nameField.update({ value: "", error: void 0 });
       goalField.update({ value: "", error: void 0 });
     }
@@ -7102,8 +7871,31 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       if (!attempt && draftScope && !sameContext(draftScope)) discardDraft();
     });
     function paint() {
-      tooltips.forEach((tooltip) => tooltip.update());
+      const descriptions = [
+        text2.createCloseDescription,
+        text2.createSubmitDescription,
+        text2.createRetryDescription,
+        text2.inspectDescription,
+        text2.dismissDescription
+      ];
+      tooltips.forEach((tooltip, index) => tooltip.update(descriptions[index]));
       if (disposed) return;
+      heading.textContent = text2.newChange;
+      nameField.update({
+        label: text2.changeName,
+        placeholder: text2.namePlaceholder,
+        error: nameInvalid ? text2.invalidName : void 0
+      });
+      goalField.update({
+        label: text2.goal,
+        placeholder: text2.goalPlaceholder,
+        error: goalInvalid ? text2.requiredGoal : void 0
+      });
+      dismiss.update({ label: text2.cancel });
+      submit.update({ label: text2.createSubmit });
+      retry.update({ label: text2.retryRead });
+      inspect.update({ label: text2.inspectChange });
+      forget.update({ label: text2.dismissAttempt });
       const current = callbacks.current();
       const origin = attempt?.scope ?? draftScope;
       const usable = origin ? sameContext(origin) : current !== null;
@@ -7117,8 +7909,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       inspect.update({ disabled: mode !== "observed-existing" || !usable });
       forgetRoot.hidden = !attempt || busy || mode === "read-failed" && usable;
       forget.update({ disabled: busy });
-      const contextNotice = origin && !usable ? ` Return to ${origin.directory} (OpenSpec root ${origin.root}) to inspect or submit in the original project.` : "";
-      message.textContent = messageText + contextNotice;
+      const contextNotice = origin && !usable ? text2.originalContext(origin.directory, origin.root) : "";
+      message.textContent = (typeof messageText === "string" ? messageText : messageText(text2)) + contextNotice;
       message.hidden = !message.textContent;
     }
     async function reconcile() {
@@ -7126,7 +7918,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       const original = attempt;
       const currentGeneration = ++generation;
       mode = "reconciling";
-      messageText = "Checking the original project for a matching change\u2026";
+      messageText = (text3) => text3.createChecking;
       paint();
       try {
         const listing = await client.list(
@@ -7137,15 +7929,16 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         if (disposed || currentGeneration !== generation) return;
         if (listing.changes.some((entry) => entry.id === original.name)) {
           mode = "observed-existing";
-          messageText = "Creation outcome is unknown. An existing change with this name was found for inspection.";
+          messageText = (text3) => text3.createObserved;
         } else {
           mode = "editing";
-          messageText = "Creation outcome is unknown. The original project was refreshed; no matching change was found.";
+          messageText = (text3) => text3.createAbsent;
         }
       } catch (caught) {
         if (disposed || currentGeneration !== generation) return;
         mode = "read-failed";
-        messageText = `Creation outcome is unknown. ${caught instanceof Error ? caught.message : "The original project could not be read."} Retry the read before creating again.`;
+        const diagnostic = caught instanceof Error ? describeError(caught) : { key: "originalReadFailed" };
+        messageText = (text3) => text3.createReadFailed(presentMessage(text3, diagnostic));
       }
       paint();
     }
@@ -7159,11 +7952,13 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       const submittedName = name.trim();
       const submittedGoal = goal.trim();
       if (!isChangeName(submittedName)) {
-        nameField.update({ error: "Use lowercase letters or digits separated by single hyphens." });
+        nameInvalid = true;
+        paint();
         return;
       }
       if (!submittedGoal) {
-        goalField.update({ error: "Goal is required." });
+        goalInvalid = true;
+        paint();
         return;
       }
       attempt = { scope: current, name: submittedName, goal: submittedGoal };
@@ -7176,7 +7971,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         await client.create(original.scope, original.name, original.goal);
         if (disposed || currentGeneration !== generation) return;
         mode = "confirmed-success";
-        messageText = "Change created.";
+        messageText = (text3) => text3.changeCreated;
         paint();
         if (sameContext(original.scope)) callbacks.created(original.scope);
         if (dialog.open) dialog.close();
@@ -7193,7 +7988,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         if (disposed || currentGeneration !== generation) return;
         if (caught instanceof ServiceRequestError && !caught.outcome && caught.code !== "CLI_TIMEOUT") {
           mode = "editing";
-          messageText = caught.message;
+          const diagnostic = describeError(caught);
+          messageText = (text3) => presentMessage(text3, diagnostic);
           paint();
           return;
         }
@@ -7210,7 +8006,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           dialog.showModal();
         }
       },
-      update: paint,
+      update(next) {
+        text2 = next;
+        paint();
+      },
       dispose() {
         tooltips.forEach((tooltip) => tooltip.dispose());
         disposed = true;
@@ -7230,6 +8029,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 
   // src/panel/delete-dialog.ts
   function mountDeleteDialog(root2, client, callbacks) {
+    let text2 = english;
+    let messageText = "";
     const dialog = document.createElement("dialog");
     const heading = document.createElement("h2");
     heading.id = "delete-change-title";
@@ -7260,10 +8061,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       dialog.close();
       target = null;
       mode = "confirming";
-      message.textContent = "";
+      messageText = "";
     }
     const cancel = mountButton(cancelRoot, {
-      label: "Cancel",
+      label: text2.cancel,
       variant: "secondary",
       size: "sm",
       onClick: () => {
@@ -7271,7 +8072,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       }
     });
     const retry = mountButton(retryRoot, {
-      label: "Retry read",
+      label: text2.retryRead,
       variant: "secondary",
       size: "sm",
       onClick: () => {
@@ -7279,7 +8080,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       }
     });
     const confirm = mountButton(deleteRoot, {
-      label: "Delete",
+      label: text2.delete,
       variant: "destructive",
       size: "sm",
       onClick: () => {
@@ -7289,31 +8090,37 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     addButtonIcon(deleteRoot, "delete");
     actions2.append(cancelRoot, retryRoot, deleteRoot);
     const tooltips = [
-      mountTooltip(
-        cancelRoot.querySelector("button"),
-        "Close this confirmation without removing the change."
-      ),
-      mountTooltip(
-        retryRoot.querySelector("button"),
-        "Read the original project to resolve the deletion outcome; do not retry deletion."
-      ),
-      mountTooltip(
-        deleteRoot.querySelector("button"),
-        "Permanently remove this change's planning folder; implementation and main specifications remain."
-      )
+      mountTooltip(cancelRoot.querySelector("button"), text2.deleteCloseDescription),
+      mountTooltip(retryRoot.querySelector("button"), text2.deleteRetryDescription),
+      mountTooltip(deleteRoot.querySelector("button"), text2.deleteSubmitDescription)
     ];
     dialog.append(heading, description, message, actions2);
     root2.append(dialog);
     function display() {
-      tooltips.forEach((tooltip) => tooltip.update());
+      const descriptions = [
+        text2.deleteCloseDescription,
+        text2.deleteRetryDescription,
+        text2.deleteSubmitDescription
+      ];
+      tooltips.forEach((tooltip, index) => tooltip.update(descriptions[index]));
+      if (target) {
+        heading.textContent = text2.deleteHeading(target.name);
+        description.textContent = text2.deleteWarning(target.name);
+      }
+      message.textContent = presentMessage(text2, messageText);
       message.hidden = !message.textContent;
       retryRoot.hidden = mode !== "unresolved";
       deleteRoot.hidden = mode !== "confirming" && mode !== "deleting";
       cancel.update({
         disabled: mode === "deleting" || mode === "reconciling" || mode === "unresolved",
-        label: mode === "present" ? "Close" : "Cancel"
+        label: mode === "present" ? text2.close : text2.cancel
       });
-      confirm.update({ disabled: mode !== "confirming", loading: mode === "deleting" });
+      retry.update({ label: text2.retryRead });
+      confirm.update({
+        label: text2.delete,
+        disabled: mode !== "confirming",
+        loading: mode === "deleting"
+      });
     }
     dialog.addEventListener("cancel", (event) => {
       if (mode === "deleting" || mode === "reconciling" || mode === "unresolved")
@@ -7323,13 +8130,13 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       if (mode !== "deleting" && mode !== "reconciling") {
         target = null;
         mode = "confirming";
-        message.textContent = "";
+        messageText = "";
       }
     });
     async function reconcile(attempt) {
       if (matches(attempt) && target === attempt) {
         mode = "reconciling";
-        message.textContent = "Checking the original project for this change\u2026";
+        messageText = { key: "deleteChecking" };
         display();
       }
       try {
@@ -7345,20 +8152,20 @@ Please report this to https://github.com/markedjs/marked.`, e) {
           callbacks.removed(attempt);
         } else {
           mode = "present";
-          message.textContent = "Removal was not confirmed. The change is still listed. Close and confirm again before another attempt.";
+          messageText = { key: "deletePresent" };
           display();
         }
       } catch {
         if (disposed || !matches(attempt) || target !== attempt) return;
         unresolved.add(key(attempt));
         mode = "unresolved";
-        message.textContent = "Deletion outcome is unresolved. Retry the read of the original project before another attempt.";
+        messageText = { key: "deleteUnresolved" };
         display();
       }
     }
     async function remove(attempt) {
       mode = "deleting";
-      message.textContent = "";
+      messageText = "";
       display();
       try {
         await client.delete(attempt.scope, attempt.name);
@@ -7371,7 +8178,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         if (caught instanceof ServiceRequestError && caught.outcome !== "unknown" && caught.code !== "CHANGE_UNAVAILABLE") {
           if (!matches(attempt) || target !== attempt) return;
           mode = "present";
-          message.textContent = caught.message;
+          messageText = describeError(caught);
           display();
         } else {
           await reconcile(attempt);
@@ -7383,20 +8190,20 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         if (dialog.open || disposed || !matches(attempt)) return;
         target = attempt;
         mode = unresolved.has(key(attempt)) ? "unresolved" : "confirming";
-        heading.textContent = `Delete ${attempt.name}?`;
-        description.textContent = `Permanently remove the planning folder for ${attempt.name}? This does not undo implementation or delete main specifications.`;
-        message.textContent = mode === "unresolved" ? "Deletion outcome is unresolved. Retry the read of the original project before another attempt." : "";
+        messageText = mode === "unresolved" ? { key: "deleteUnresolved" } : "";
         display();
         dialog.showModal();
         cancelRoot.querySelector("button")?.focus();
       },
-      update() {
+      update(next) {
+        text2 = next;
         if (target && !matches(target)) {
           if (mode === "deleting" || mode === "reconciling" || mode === "unresolved")
             unresolved.add(key(target));
           dialog.close();
           target = null;
         }
+        display();
       },
       dispose() {
         tooltips.forEach((tooltip) => tooltip.dispose());
@@ -7412,14 +8219,15 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 
   // src/panel/archive-dialog.ts
   function mountArchiveDialog(root2, callbacks) {
+    let text2 = english;
     const dialog = document.createElement("dialog");
     const heading = document.createElement("h2");
     heading.id = "archive-all-title";
-    heading.textContent = "Archive all completed changes?";
+    heading.textContent = text2.archiveHeading;
     dialog.setAttribute("aria-labelledby", heading.id);
     const description = document.createElement("p");
     description.id = "archive-all-description";
-    description.textContent = "This creates a new session and sends a prompt to archive completed changes in this project. Unfinished changes will be skipped. The board stays open; use refresh to see updates.";
+    description.textContent = text2.archiveWarning;
     dialog.setAttribute("aria-describedby", description.id);
     const actions2 = document.createElement("div");
     actions2.className = "archive-actions";
@@ -7434,13 +8242,13 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       opener = null;
     }
     const cancel = mountButton(cancelRoot, {
-      label: "Cancel",
+      label: text2.cancel,
       variant: "secondary",
       size: "sm",
       onClick: close
     });
     const start = mountButton(startRoot, {
-      label: "Start archiving",
+      label: text2.startArchiving,
       size: "sm",
       onClick: () => {
         if (!origin || origin !== callbacks.current() || !callbacks.canStart()) return;
@@ -7454,14 +8262,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     });
     actions2.append(cancelRoot, startRoot);
     const tooltips = [
-      mountTooltip(
-        cancelRoot.querySelector("button"),
-        "Close this confirmation without creating a session or sending a prompt."
-      ),
-      mountTooltip(
-        startRoot.querySelector("button"),
-        "Create a new session and submit the completed-only archive prompt; skip unfinished changes."
-      )
+      mountTooltip(cancelRoot.querySelector("button"), text2.archiveCancelDescription),
+      mountTooltip(startRoot.querySelector("button"), text2.archiveStartDescription)
     ];
     dialog.append(heading, description, actions2);
     root2.append(dialog);
@@ -7473,10 +8275,15 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         dialog.showModal();
         cancelRoot.querySelector("button")?.focus();
       },
-      update() {
-        tooltips.forEach((tooltip) => tooltip.update());
+      update(next) {
+        text2 = next;
+        heading.textContent = text2.archiveHeading;
+        description.textContent = text2.archiveWarning;
+        cancel.update({ label: text2.cancel });
+        tooltips[0].update(text2.archiveCancelDescription);
+        tooltips[1].update(text2.archiveStartDescription);
         if (dialog.open && origin !== callbacks.current()) close();
-        start.update({ disabled: !callbacks.canStart() });
+        start.update({ label: text2.startArchiving, disabled: !callbacks.canStart() });
       },
       dispose() {
         tooltips.forEach((tooltip) => tooltip.dispose());
@@ -7487,23 +8294,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     };
   }
 
-  // src/panel/archive-prompt.ts
-  var archiveAllPrompt = `Archive all completed OpenSpec changes in this session's project/worktree.
-
-Run openspec list --json for a fresh active-change listing and resolve its OpenSpec planning context, honouring declared stores and the selected CLI root. Inspect each change with openspec status --change "<name>" --json and current CLI-reported task counts. Only changes with every applicable planning artefact done or explicitly skipped, a positive task total, and all tasks complete qualify. Skip unfinished, zero-task, unavailable or unreadable changes. Never use an incomplete-work warning override or infer successful verification from a Complete card or task counts.
-
-Use your skill tool to load and invoke the openspec-archive-change skill for each qualifying named change sequentially. Recheck completion before each archive and assess spec sync against the current main specs after any preceding archive. Preserve the skill's prerequisites, sync assessment, user choices and blockers; ask its required questions rather than treating this bulk request as permission to bypass them. Do not implement unfinished work or automatically resolve blockers.
-
-Report archived, skipped and blocked changes with reasons. If none qualify, make no OpenSpec mutations and report that outcome.`;
-
   // src/panel/worktree.ts
   async function ready(read, subscribe) {
     const initial = await read();
     if (initial.state === "ready") return initial;
     if (initial.state === "error")
-      throw new Error(
-        "Host workspace inspection failed. Inspect worktrees and sessions before trying again."
-      );
+      throw ownedError(new Error(english.workspaceInspectionFailed), "workspaceInspectionFailed");
     let off;
     let settled = false;
     let timer;
@@ -7511,13 +8307,18 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       return await new Promise((resolve, reject) => {
         timer = setTimeout(() => {
           settled = true;
-          reject(new Error("Host workspace inspection timed out. No creation was requested."));
+          reject(
+            ownedError(new Error(english.workspaceInspectionTimeout), "workspaceInspectionTimeout")
+          );
         }, 2e4);
         void subscribe((value) => {
           if (value.state === "loading") return;
           settled = true;
           if (value.state === "ready") resolve(value);
-          else reject(new Error("Host workspace inspection failed."));
+          else
+            reject(
+              ownedError(new Error(english.workspaceInspectionError), "workspaceInspectionError")
+            );
         }).then((unsubscribe) => {
           off = unsubscribe;
           if (settled) off();
@@ -7550,9 +8351,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       );
     }
     if (owners.length !== 1)
-      throw new Error(
-        "Cannot identify the originating registered project. No worktree was requested."
-      );
+      throw ownedError(new Error(english.projectUnidentified), "projectUnidentified");
     const project = owners[0];
     const [trees, sessions] = await Promise.all([
       ready(
@@ -7565,14 +8364,20 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       )
     ]);
     if (sessions.coverage.some((item) => item.state !== "ready"))
-      throw new Error("Session inspection is incomplete. Inspect the project before trying again.");
+      throw ownedError(new Error(english.sessionsIncomplete), "sessionsIncomplete");
     const collision = trees.worktrees.find((tree) => tree.name === name || tree.branch === name);
     const session = sessions.sessions.find(
       (session2) => session2.worktree?.name === name || session2.items.some((item) => item.id === name)
     );
     if (collision || session)
-      throw new Error(
-        `Worktree or session for ${name} already exists${collision ? ` at ${collision.directory}` : ` (session ${session.id})`}. Inspect it instead of creating another worktree.`
+      throw ownedError(
+        new Error(english.worktreeCollision(name, collision?.directory ?? null, session?.id ?? null)),
+        {
+          key: "worktreeCollision",
+          name,
+          directory: collision?.directory ?? null,
+          session: session?.id ?? null
+        }
       );
     return project;
   }
@@ -7599,7 +8404,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
     let pendingSummaries = 0;
     let loading = false;
     let settled = false;
-    let errorMessage = null;
+    let errorMessage2 = null;
     let search = "";
     let selectedChange = null;
     let selectedArtifact = "";
@@ -7614,6 +8419,74 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
     const worktreePending = /* @__PURE__ */ new Set();
     const worktreeKey = (scope2, id) => JSON.stringify([scope2.directory, scope2.root, scope2.planning, id]);
     let disposed = false;
+    let languagePreference = "auto";
+    let hostLocale = "en";
+    let preferenceReading = true;
+    let preferenceSaving = false;
+    let preferenceWarning = null;
+    let text2 = uiText("en");
+    const languageRow = document.createElement("div");
+    languageRow.className = "language-row";
+    const languageRoot = document.createElement("span");
+    const languageWarning = document.createElement("span");
+    languageWarning.className = "language-warning";
+    languageWarning.setAttribute("role", "status");
+    languageRow.append(languageRoot, languageWarning);
+    appRoot.classList.add("language-layout");
+    const languageSelect = mountSelect(languageRoot, {
+      label: text2.language,
+      value: languagePreference,
+      options: [],
+      searchable: false,
+      disabled: true,
+      onChange: (value) => {
+        if (disposed || preferenceReading || preferenceSaving || !isLanguagePreference(value) || value === languagePreference)
+          return;
+        preferenceSaving = true;
+        preferenceWarning = null;
+        renderLanguage();
+        void host2.storage.set("ui.language", value).then(
+          () => {
+            if (!disposed) languagePreference = value;
+          },
+          () => {
+            if (!disposed) preferenceWarning = "writePreferenceFailed";
+          }
+        ).finally(() => {
+          if (disposed) return;
+          preferenceSaving = false;
+          render();
+        });
+      }
+    });
+    const languageTrigger = languageRoot.querySelector("button");
+    const guardLanguage = (event) => {
+      if (!preferenceSaving) return;
+      if (event instanceof KeyboardEvent && !["Enter", " ", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
+        return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    languageTrigger.addEventListener("click", guardLanguage, true);
+    languageTrigger.addEventListener("keydown", guardLanguage, true);
+    function renderLanguage() {
+      const language = resolveLanguage(languagePreference, hostLocale);
+      text2 = uiText(language);
+      document.documentElement.lang = language;
+      languageSelect.update({
+        label: text2.language,
+        value: languagePreference,
+        options: [
+          { id: "auto", label: text2.auto },
+          { id: "en", label: "English" },
+          { id: "ru", label: "\u0420\u0443\u0441\u0441\u043A\u0438\u0439" }
+        ],
+        disabled: preferenceReading
+      });
+      languageTrigger.setAttribute("aria-disabled", String(preferenceReading || preferenceSaving));
+      languageTrigger.setAttribute("aria-busy", String(preferenceReading || preferenceSaving));
+      languageWarning.textContent = preferenceWarning ? text2[preferenceWarning] : "";
+    }
     function invalidate() {
       epoch++;
       boardOperation++;
@@ -7636,14 +8509,14 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       detailOpening++;
       readGeneration++;
       search = "";
-      errorMessage = null;
+      errorMessage2 = null;
       render();
     }
     function planningChanged() {
       const retainedSearch = search;
       invalidate();
       search = retainedSearch;
-      errorMessage = "Planning target changed. Refresh to establish the new scope.";
+      errorMessage2 = { key: "planningChanged" };
       render();
     }
     function loadBoard(refresh = false, reconcile = false) {
@@ -7667,7 +8540,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       const operation = ++boardOperation;
       const startingEpoch = epoch;
       loading = true;
-      errorMessage = null;
+      errorMessage2 = null;
       render();
       void (async () => {
         try {
@@ -7691,7 +8564,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
           }
           if (pendingInspection?.scope === current && pendingInspection.epoch === epoch && operation >= pendingInspection.minOperation && !listed.has(pendingInspection.name)) {
             pendingInspection = null;
-            errorMessage = "The observed change is no longer available for inspection.";
+            errorMessage2 = { key: "inspectionUnavailable" };
           }
           for (const change of changes)
             if (!listed.has(change.id)) resources.invalidateChange(current, change.id);
@@ -7759,7 +8632,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
                 ...failures.filter((item) => item.id !== entry.id),
                 {
                   id: entry.id,
-                  error: caught instanceof Error ? caught.message : "Change could not be read."
+                  error: caught instanceof Error ? describeError(caught) : { key: "localReadFailed" }
                 }
               ];
               if (changes.some((item) => item.id === entry.id)) staleIds.add(entry.id);
@@ -7785,7 +8658,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
           }
           pendingSummaries = 0;
           staleIds = new Set(changes.map((change) => change.id));
-          errorMessage = caught instanceof Error ? caught.message : "The board could not be loaded.";
+          errorMessage2 = caught instanceof Error ? describeError(caught) : { key: "boardLoadFailed" };
         } finally {
           if (epoch === startingEpoch && directory === currentDirectory && operation === boardOperation) {
             loading = false;
@@ -7801,7 +8674,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
     }
     async function prepareChangeWorkflow(workflow, change, captured, originatingEpoch, originatingSession, detail = false) {
       const current = () => !disposed && !!captured && scope === captured && epoch === originatingEpoch && directory === captured.directory && sessionId === originatingSession && !unavailableIds.has(change.id) && changes.some((item) => item.id === change.id) && (!detail || selectedChange?.id === change.id);
-      await composePrompt(changeWorkflowPrompt(workflow, change), current);
+      await composePrompt(changeWorkflowPrompt(workflow, change, text2), current);
     }
     async function preparePrompt(change, captured, originatingEpoch, intent, originatingSession = sessionId) {
       const current = changes.find((item) => item.id === change.id);
@@ -7814,24 +8687,24 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       }
       const expectedSession = sessionId;
       await composePrompt(
-        actionPrompt(change, intent),
+        actionPrompt(change, intent, text2),
         () => scope === captured && epoch === originatingEpoch && sessionId === expectedSession
       );
     }
-    async function composePrompt(text2, current) {
+    async function composePrompt(prompt, current) {
       if (!current()) return;
       try {
-        await host2.compose({ text: text2, mode: "replace" });
+        await host2.compose({ text: prompt, mode: "replace" });
         if (!current()) return;
         await host2.toast({
           kind: "success",
-          message: "Workflow prompt prepared in the open composer."
+          message: text2.promptPrepared
         });
       } catch (caught) {
         if (!current()) return;
         await host2.toast({
           kind: "error",
-          message: caught instanceof HostRequestError ? caught.message : "The workflow prompt could not be prepared."
+          message: caught instanceof HostRequestError ? caught.message : text2.promptFailed
         });
       }
     }
@@ -7841,6 +8714,8 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       const expectedSession = sessionId;
       const current = () => !disposed && scope === captured && epoch === originatingEpoch && sessionId === expectedSession && !unavailableIds.has(change.id) && changes.some((item) => item.id === change.id && item.stage === change.stage);
       worktreePending.add(key);
+      const prompt = actionPrompt(change, "primary", text2);
+      const title = text2.applyTitle(change.id);
       render();
       let dispatched = false;
       let knownSession = null;
@@ -7851,26 +8726,33 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
         if (!current()) return;
         const listed = listing.changes.find((item) => item.id === change.id);
         if (!listed || listed.totalTasks > 0 && listed.completedTasks === listed.totalTasks)
-          throw new Error("This change is no longer applicable. Refresh before starting Apply.");
+          throw ownedError(new Error(english.applyUnavailable), "applyUnavailable");
         dispatched = true;
         const result = await host2.startSession({
           providerId: "openspec-board",
           id: change.id,
-          title: `Apply ${change.id}`,
+          title,
           url: "https://openspec.dev/docs/quickstart",
           projectId: project.id,
           worktree: { kind: "new", name: change.id },
           navigation: "preserve",
-          text: actionPrompt(change, "primary")
+          text: prompt
         });
         knownSession = result.sessionId;
         if (!current()) return;
-        const resource = result.worktree ? ` Worktree ${result.worktree.name} at ${result.worktree.directory} is retained.` : "";
+        const resource = result.worktree ? text2.retainedWorktree(result.worktree.name, result.worktree.directory) : "";
         if (!result.sessionId || result.sent !== "sent") {
           await host2.toast({
             kind: "error",
             persistent: true,
-            message: result.sessionId ? `Session ${result.sessionId} exists, but Apply submission was not confirmed (${result.sent}).${resource} Inspect it before another attempt.` : `Apply creation failed (${"failure" in result ? result.failure : "unknown"}).${resource} Inspect worktrees and sessions before another attempt.`
+            message: result.sessionId ? text2.applyNotSent(
+              result.sessionId,
+              text2.sentReasons[result.sent] ?? result.sent,
+              resource
+            ) : text2.applyCreationFailed(
+              text2.sentReasons["failure" in result ? result.failure : "unknown"] ?? ("failure" in result ? result.failure : "unknown"),
+              resource
+            )
           });
           return;
         }
@@ -7878,13 +8760,13 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
           await host2.toast({
             kind: "error",
             persistent: true,
-            message: `Session ${result.sessionId} was returned with an unexpected worktree result.${resource} Inspect it before another attempt.`
+            message: text2.applyUnexpected(result.sessionId, resource)
           });
           return;
         }
         await host2.toast({
           kind: result.linked === false ? "info" : "success",
-          message: `Apply submitted in session ${result.sessionId}.${result.linked === false ? " Its workflow reference could not be saved." : ""}`
+          message: text2.applySubmitted(result.sessionId, result.linked !== false)
         });
         if (current()) await host2.openSession(result.sessionId);
       } catch (caught) {
@@ -7892,7 +8774,9 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
         await host2.toast({
           kind: "error",
           persistent: dispatched,
-          message: knownSession ? `Apply session ${knownSession} exists, but it could not be opened. Inspect that session; submission will not be repeated.` : dispatched ? `Apply launch outcome is uncertain. A worktree, session or sent prompt may already exist. Inspect worktrees and sessions before another attempt; this launch will not be retried automatically. ${caught instanceof Error ? caught.message : ""}` : caught instanceof Error ? caught.message : "Worktree inspection failed. No creation was requested."
+          message: knownSession ? text2.applyOpenFailed(knownSession) : dispatched ? text2.applyUncertain(
+            caught instanceof Error ? presentMessage(text2, describeError(caught)) : ""
+          ) : caught instanceof Error ? presentMessage(text2, describeError(caught)) : text2.worktreeInspectionFailed
         });
       } finally {
         worktreePending.delete(key);
@@ -8045,7 +8929,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       } catch (caught) {
         await host2.toast({
           kind: "error",
-          message: caught instanceof HostRequestError ? caught.message : "Cannot open quickstart"
+          message: caught instanceof HostRequestError ? caught.message : text2.quickstartFailed
         });
       }
     }
@@ -8064,23 +8948,23 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
         const result = await host2.startSession({
           providerId: "openspec-board",
           id: "archive-all",
-          title: "Archive completed OpenSpec changes",
+          title: text2.archiveTitle,
           url: "https://openspec.dev/docs/quickstart",
           navigation: "preserve",
-          text: archiveAllPrompt
+          text: text2.prompts.archiveAll
         });
         if (!current()) return;
         if (result.sessionId && result.sent === "sent") {
           await host2.toast({
             kind: result.linked !== false ? "success" : "info",
-            message: result.linked !== false ? `Archive prompt submitted in session ${result.sessionId}. Use refresh to see updates.` : `Archive prompt submitted in session ${result.sessionId}, but its workflow reference could not be saved.`
+            message: text2.archiveSubmitted(result.sessionId, result.linked !== false)
           });
         } else {
-          const reason = result.sent === "no-model" ? "No model was available." : `Submission ${result.sent}.`;
+          const reason = result.sent === "no-model" ? text2.noModel : text2.submissionReason(text2.sentReasons[result.sent] ?? result.sent);
           await host2.toast({
             kind: "error",
             persistent: true,
-            message: result.sessionId ? `Session ${result.sessionId} exists, but the archive prompt was not submitted successfully. ${reason} Inspect this session before starting again.${result.linked === false ? " Its workflow reference was not saved." : ""}` : "The archive session could not be created. Inspect sessions before starting again."
+            message: result.sessionId ? text2.archiveNotSent(result.sessionId, reason, result.linked !== false) : text2.archiveCreationFailed
           });
         }
       } catch (caught) {
@@ -8091,7 +8975,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
         await host2.toast({
           kind: "error",
           persistent: !knownRefusal,
-          message: knownRefusal ? `Archive launch failed: ${caught.message}` : "Archive launch outcome is uncertain. A session or submitted prompt may already exist. Inspect sessions before starting again; this launch will not be retried automatically."
+          message: knownRefusal ? text2.archiveRefused(caught.message) : text2.archiveUncertain
         });
       } finally {
         archivePending = false;
@@ -8119,6 +9003,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       }
     });
     const detailRoot = document.createElement("div");
+    detailRoot.className = "language-content";
     appRoot.append(detailRoot);
     const deleteView = mountDeleteDialog(appRoot, client, {
       current: () => selectedChange && scope ? { scope, epoch, selection: selection2, name: selectedChange.id } : null,
@@ -8140,9 +9025,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
         resources.invalidateChange(attempt.scope, attempt.name);
         render();
         loadBoard(true, true);
-        queueMicrotask(
-          () => appRoot.querySelector('input[aria-label="Search changes"]')?.focus()
-        );
+        queueMicrotask(() => appRoot.querySelector(".board-search input")?.focus());
       }
     });
     const detailView = mountDetailView(detailRoot, {
@@ -8155,11 +9038,11 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
           } catch (caught) {
             await host2.toast({
               kind: "error",
-              message: caught instanceof HostRequestError ? caught.message : "Could not copy change name"
+              message: caught instanceof HostRequestError ? caught.message : text2.copyFailed
             });
             return;
           }
-          await host2.toast({ kind: "success", message: "Change name copied" });
+          await host2.toast({ kind: "success", message: text2.nameCopied });
         })().catch(() => {
         });
       },
@@ -8167,7 +9050,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
         void host2.openUrl(url).catch(async (caught) => {
           await host2.toast({
             kind: "error",
-            message: caught instanceof HostRequestError ? caught.message : "Cannot open document link"
+            message: caught instanceof HostRequestError ? caught.message : text2.linkFailed
           });
         }).catch(() => {
         });
@@ -8188,7 +9071,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
           const opener = [...appRoot.querySelectorAll(".card-main")].find(
             (button2) => button2.textContent === name
           );
-          (opener ?? appRoot.querySelector('input[aria-label="Search changes"]'))?.focus();
+          (opener ?? appRoot.querySelector(".board-search input"))?.focus();
         });
       },
       selectArtifact,
@@ -8207,18 +9090,22 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       }
     });
     function render() {
+      const previousText = text2;
+      const scroll = { left: window.scrollX, top: window.scrollY };
+      renderLanguage();
       const originatingSession = sessionId;
       const detailChange = selectedChange;
-      createView.update();
-      deleteView.update();
-      archiveView.update();
+      createView.update(text2);
+      deleteView.update(text2);
+      archiveView.update(text2);
       const captured = scope;
       const originatingEpoch = epoch;
       const originatingDirectory = directory;
       boardView.update({
+        text: text2,
         directory,
         workflow: (workflow) => void composePrompt(
-          globalWorkflowPrompt(workflow),
+          globalWorkflowPrompt(workflow, text2),
           () => !!originatingDirectory && !disposed && directory === originatingDirectory && scope === captured && epoch === originatingEpoch && sessionId === originatingSession
         ),
         canCreate: !!scope,
@@ -8231,7 +9118,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
         pendingSummaries,
         loading,
         settled,
-        error: errorMessage,
+        error: errorMessage2,
         failures,
         cards: changes.map((change) => ({
           change,
@@ -8254,8 +9141,10 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
         }))
       });
       boardView.setVisible(!selectedChange);
+      const detailIssue = failures.find((item) => item.id === selectedChange?.id)?.error;
       detailView.update(
         selectedChange ? {
+          text: text2,
           change: selectedChange,
           selectedArtifact,
           activeView,
@@ -8264,7 +9153,7 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
           unavailable: unavailableIds.has(selectedChange.id),
           pending: !!captured && worktreePending.has(worktreeKey(captured, selectedChange.id)),
           loading,
-          refreshError: errorMessage ?? failures.find((item) => item.id === selectedChange?.id)?.error ?? null,
+          refreshError: (errorMessage2 ? presentMessage(text2, errorMessage2) : null) ?? (detailIssue ? presentMessage(text2, detailIssue) : null) ?? null,
           primaryAction: (intent) => {
             if (detailChange)
               void preparePrompt(
@@ -8288,8 +9177,11 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
           }
         } : null
       );
+      if (text2 !== previousText) window.scrollTo(scroll);
     }
+    appRoot.append(languageRow);
     const offReady = host2.onReady((ready2) => {
+      hostLocale = ready2.locale;
       const changed = directory !== ready2.directory;
       directory = ready2.directory;
       sessionId = ready2.session?.id ?? null;
@@ -8308,6 +9200,22 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       sessionId = nextSession?.id ?? null;
       render();
     });
+    render();
+    void host2.storage.get("ui.language").then(
+      (value) => {
+        if (disposed) return;
+        if (value !== void 0 && !isLanguagePreference(value))
+          preferenceWarning = "invalidPreference";
+        else languagePreference = value ?? "auto";
+      },
+      () => {
+        if (!disposed) preferenceWarning = "readPreferenceFailed";
+      }
+    ).finally(() => {
+      if (disposed) return;
+      preferenceReading = false;
+      render();
+    });
     return () => {
       disposed = true;
       epoch++;
@@ -8317,6 +9225,11 @@ Report archived, skipped and blocked changes with reasons. If none qualify, make
       offDirectory();
       offSession();
       resources.dispose();
+      languageTrigger.removeEventListener("click", guardLanguage, true);
+      languageTrigger.removeEventListener("keydown", guardLanguage, true);
+      languageSelect.dispose();
+      languageRow.remove();
+      appRoot.classList.remove("language-layout");
       boardView.dispose();
       detailView.dispose();
       deleteView.dispose();

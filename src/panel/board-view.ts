@@ -11,6 +11,7 @@ import { mountPrimaryAction, mountWorkflowMenu } from "./primary-action.js";
 import { mountHelpButton, mountTooltip } from "./help-button.js";
 import { addButtonIcon } from "./button-icon.js";
 import { mountAreaBadges } from "./area-badges.js";
+import { english, presentMessage, type LocalMessage, type UiText } from "./localization.js";
 
 export type BoardCard = {
   change: DerivedChange;
@@ -22,6 +23,7 @@ export type BoardCard = {
   workflow: (workflow: ChangeWorkflow) => void;
 };
 export type BoardState = {
+  text: UiText;
   directory: string | null;
   workflow: (workflow: GlobalWorkflow) => void;
   canCreate: boolean;
@@ -34,8 +36,8 @@ export type BoardState = {
   pendingSummaries: number;
   loading: boolean;
   settled: boolean;
-  error: string | null;
-  failures: { id: string; error: string }[];
+  error: string | LocalMessage | null;
+  failures: { id: string; error: string | LocalMessage }[];
   cards: BoardCard[];
 };
 
@@ -49,6 +51,7 @@ export function mountBoardView(
     help: () => void;
   },
 ) {
+  let text = english;
   const main = document.createElement("div");
   main.className = "board-shell";
   const header = document.createElement("header");
@@ -62,7 +65,7 @@ export function mountBoardView(
   headingActions.className = "heading-actions";
   const newChangeRoot = document.createElement("span");
   const newChange = mountButton(newChangeRoot, {
-    label: "Create scaffold…",
+    label: text.create,
     variant: "default",
     size: "sm",
     disabled: true,
@@ -71,7 +74,7 @@ export function mountBoardView(
   addButtonIcon(newChangeRoot, "create");
   const archiveRoot = document.createElement("span");
   const archive = mountButton(archiveRoot, {
-    label: "Archive all",
+    label: text.archiveAll,
     variant: "secondary",
     size: "sm",
     disabled: true,
@@ -87,7 +90,7 @@ export function mountBoardView(
   const refreshRoot = document.createElement("span");
   refreshRoot.className = "refresh-control";
   const refresh = mountButton(refreshRoot, {
-    label: "Refresh",
+    label: text.refresh,
     variant: "ghost",
     size: "sm",
     onClick: callbacks.retry,
@@ -96,18 +99,9 @@ export function mountBoardView(
   const helpRoot = document.createElement("span");
   const help = mountHelpButton(helpRoot, callbacks.help);
   const tooltips = [
-    mountTooltip(
-      newChangeRoot.querySelector("button")!,
-      "Open a form that directly creates a scaffold with its name and goal; no agent prompt is sent.",
-    ),
-    mountTooltip(
-      archiveRoot.querySelector("button")!,
-      "Open confirmation to create a new session and submit an archive prompt for completed changes only; unfinished changes are skipped.",
-    ),
-    mountTooltip(
-      refreshRoot.querySelector("button")!,
-      "Read the latest board state without changing files.",
-    ),
+    mountTooltip(newChangeRoot.querySelector("button")!, text.createDescription),
+    mountTooltip(archiveRoot.querySelector("button")!, text.archiveDescription),
+    mountTooltip(refreshRoot.querySelector("button")!, text.refreshDescription),
   ];
   const workflowRoot = document.createElement("span");
   const workflows = mountWorkflowMenu(workflowRoot, globalWorkflows);
@@ -117,10 +111,9 @@ export function mountBoardView(
   let searchValue = "";
   const search = mountSearchField(searchRoot, {
     value: "",
-    placeholder: "Search changes",
-    label: "Search changes",
+    placeholder: text.search,
+    label: text.search,
     onChange: (value) => {
-      searchValue = value;
       callbacks.search(value);
     },
   });
@@ -149,6 +142,7 @@ export function mountBoardView(
   root.append(main);
   let noticesMounted: { dispose: () => void }[] = [];
   let noticeSignature = "";
+  let noticeUpdates: (() => void)[] = [];
   const cards = new Map<
     string,
     {
@@ -169,24 +163,25 @@ export function mountBoardView(
       current: BoardCard;
     }
   >();
-  function addAction(target: HTMLElement, label: string) {
+  function addAction(target: HTMLElement) {
     const mount = document.createElement("span");
     target.append(mount);
     const button = mountButton(mount, {
-      label,
+      label: text.retry,
       variant: "secondary",
       size: "sm",
       onClick: callbacks.retry,
     });
-    const tooltip = mountTooltip(
-      mount.querySelector("button")!,
-      "Retry reading the board; do not repeat any write.",
-    );
+    const tooltip = mountTooltip(mount.querySelector("button")!, text.retryDescription);
     noticesMounted.push({
       dispose() {
         tooltip.dispose();
         button.dispose();
       },
+    });
+    noticeUpdates.push(() => {
+      button.update({ label: text.retry });
+      tooltip.update(text.retryDescription);
     });
   }
   function cardFor(item: BoardCard) {
@@ -200,7 +195,7 @@ export function mountBoardView(
       const progressLabel = document.createElement("p");
       progressLabel.className = "progress-label";
       const progressRoot = document.createElement("div");
-      const progress = mountProgress(progressRoot, { value: 0, label: "Task completion" });
+      const progress = mountProgress(progressRoot, { value: 0, label: text.taskCompletion });
       const actionRoot = document.createElement("span");
       actionRoot.className = "card-actions";
       const id = item.change.id;
@@ -231,15 +226,9 @@ export function mountBoardView(
       node.append(progressLabel, progressRoot, actionRoot, status);
       entry = {
         tooltips: [
-          mountTooltip(title, "Open this change's planning documents and tasks."),
-          mountTooltip(
-            exploreRoot.querySelector("button")!,
-            "Prepare an editable, unsent exploration prompt without file changes.",
-          ),
-          mountTooltip(
-            verifyRoot.querySelector("button")!,
-            "Prepare an editable, unsent diagnostic verification prompt; do not implement or archive.",
-          ),
+          mountTooltip(title, text.openChangeDescription),
+          mountTooltip(exploreRoot.querySelector("button")!, text.exploreDescription),
+          mountTooltip(verifyRoot.querySelector("button")!, text.verifyDescription),
         ],
         node,
         title,
@@ -259,33 +248,42 @@ export function mountBoardView(
       cards.set(id, entry);
     }
     entry.current = item;
-    entry.tooltips.forEach((tooltip) => tooltip.update());
+    entry.tooltips.forEach((tooltip, index) =>
+      tooltip.update(
+        [text.openChangeDescription, text.exploreDescription, text.verifyDescription][index],
+      ),
+    );
     const change = item.change;
     if (entry.title.textContent !== change.id) entry.title.textContent = change.id;
     entry.areas.update(change.affectedAreas);
-    const label = `${change.completedArtifacts} of ${change.totalArtifacts} artefacts${change.totalTasks === 0 ? " · No tasks yet" : ""}`;
+    const label = `${text.artifacts(change.completedArtifacts, change.totalArtifacts)}${change.totalTasks === 0 ? ` · ${text.noTasks}` : ""}`;
     if (entry.progressLabel.textContent !== label) entry.progressLabel.textContent = label;
     entry.progressRoot.hidden = !change.totalTasks;
     entry.progress.update({
       value: change.totalTasks ? Math.round((100 * change.completedTasks) / change.totalTasks) : 0,
-      label: `${change.completedTasks} of ${change.totalTasks} tasks complete`,
+      label: text.tasks(change.completedTasks, change.totalTasks),
     });
     entry.action.update({
+      text,
       id: change.id,
       stage: change.stage,
       disabled: item.unavailable,
       pending: item.pending,
       action: item.action,
     });
-    entry.explore.update({ disabled: item.unavailable });
-    entry.workflows.update({ disabled: item.unavailable, action: item.workflow });
+    entry.explore.update({ label: text.explore, disabled: item.unavailable });
+    entry.workflows.update({
+      text,
+      labels: text.changeWorkflows,
+      disabled: item.unavailable,
+      action: item.workflow,
+    });
     entry.exploreRoot.hidden = change.stage !== "planning";
     entry.verifyRoot.hidden = change.stage !== "complete";
-    entry.verify.update({ disabled: item.unavailable });
+    entry.verify.update({ label: text.verify, disabled: item.unavailable });
     entry.status.hidden = !item.stale && !item.unavailable;
-    if (item.unavailable) entry.status.textContent = `${change.id} is no longer available.`;
-    else if (item.stale)
-      entry.status.textContent = `${change.id} is stale; latest summary unavailable.`;
+    if (item.unavailable) entry.status.textContent = text.unavailable(change.id);
+    else if (item.stale) entry.status.textContent = text.stale(change.id);
     return entry.node;
   }
   return {
@@ -294,18 +292,41 @@ export function mountBoardView(
       tooltips.forEach((tooltip) => tooltip.update());
     },
     update(state: BoardState) {
-      tooltips.forEach((tooltip) => tooltip.update());
-      workflows.update({ disabled: !state.directory, action: state.workflow });
-      project.textContent =
-        state.directory?.split("/").filter(Boolean).at(-1) ?? "No project selected";
-      newChange.update({ disabled: !state.canCreate });
-      archive.update({ disabled: !state.canArchive, loading: state.archivePending });
+      text = state.text;
+      tooltips.forEach((tooltip, index) =>
+        tooltip.update(
+          [text.createDescription, text.archiveDescription, text.refreshDescription][index],
+        ),
+      );
+      help.update(text.help, text.helpDescription);
+      workflows.update({
+        text,
+        labels: text.globalWorkflows,
+        disabled: !state.directory,
+        action: state.workflow,
+      });
+      project.textContent = state.directory?.split("/").filter(Boolean).at(-1) ?? text.noProject;
+      newChange.update({ label: text.create, disabled: !state.canCreate });
+      archive.update({
+        label: text.archiveAll,
+        disabled: !state.canArchive,
+        loading: state.archivePending,
+      });
+      const searchProps: { label: string; placeholder: string; value?: string } = {
+        label: text.search,
+        placeholder: text.search,
+      };
       if (searchValue !== state.search) {
         searchValue = state.search;
-        search.update({ value: searchValue });
+        searchProps.value = searchValue;
       }
-      tally.textContent = `${state.listedCount} changes · ${state.completedTasks} of ${state.totalTasks} tasks complete`;
-      refresh.update({ disabled: !state.directory, loading: state.loading });
+      // SDK repaints its hardcoded clear label on every search handle update.
+      search.update(searchProps);
+      searchRoot
+        .querySelector(".oc-sdk-search-clear")
+        ?.setAttribute("aria-label", text.clearSearch);
+      tally.textContent = text.tally(state.listedCount, state.completedTasks, state.totalTasks);
+      refresh.update({ label: text.refresh, disabled: !state.directory, loading: state.loading });
       const nextNoticeSignature = JSON.stringify([
         !!state.directory,
         state.error,
@@ -315,33 +336,42 @@ export function mountBoardView(
         noticeSignature = nextNoticeSignature;
         noticesMounted.forEach((handle) => handle.dispose());
         noticesMounted = [];
+        noticeUpdates = [];
         notices.replaceChildren();
         if (!state.directory) {
           const notice = document.createElement("p");
           notice.className = "notice";
-          notice.textContent =
-            "Select an OpenChamber project or worktree to view its OpenSpec changes.";
+          noticeUpdates.push(() => {
+            notice.textContent = text.selectProject;
+          });
           notices.append(notice);
         }
         if (state.error) {
           const notice = document.createElement("div");
           notice.className = "notice error";
           const message = document.createElement("span");
-          message.textContent = state.error;
+          const error = state.error;
+          noticeUpdates.push(() => {
+            message.textContent = presentMessage(text, error);
+          });
           notice.append(message);
-          addAction(notice, "Retry");
+          addAction(notice);
           notices.append(notice);
         }
         if (state.failures.length) {
           const notice = document.createElement("div");
           notice.className = "notice";
           const message = document.createElement("span");
-          message.textContent = `${state.failures.map(({ id }) => id).join(", ")} could not be read. Refresh to try again.`;
+          const ids = state.failures.map(({ id }) => id).join(", ");
+          noticeUpdates.push(() => {
+            message.textContent = text.failures(ids);
+          });
           notice.append(message);
-          addAction(notice, "Retry");
+          addAction(notice);
           notices.append(notice);
         }
       }
+      noticeUpdates.forEach((update) => update());
       const ids = new Set(state.cards.map(({ change }) => change.id));
       for (const [id, entry] of cards) {
         if (ids.has(id)) continue;
@@ -369,7 +399,7 @@ export function mountBoardView(
               `${change.id} ${change.goal ?? ""}`.toLocaleLowerCase().includes(query),
           )
           .sort((a, b) => (a.change.id < b.change.id ? -1 : a.change.id > b.change.id ? 1 : 0));
-        label.textContent = `${stage.label} ${matching.length}`;
+        label.textContent = `${text.stages[stage.id]} ${matching.length}`;
         for (const child of [...grid.children]) {
           if (
             child !== empty &&
@@ -378,11 +408,11 @@ export function mountBoardView(
             child.remove();
         }
         empty.textContent =
-          state.loading && !state.settled && state.pendingSummaries
-            ? "Loading…"
+          state.loading && !state.cards.length
+            ? text.loading
             : query
-              ? "No matching changes"
-              : "No changes here";
+              ? text.noMatches
+              : text.noChanges;
         if (!matching.length) {
           if (empty.parentElement !== grid) grid.append(empty);
         } else empty.remove();

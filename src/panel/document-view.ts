@@ -1,6 +1,7 @@
 import { mountButton } from "@openchamber/sdk/ui";
 import { renderDocument } from "./document-renderer.js";
 import { mountTooltip } from "./help-button.js";
+import { english, type UiText } from "./localization.js";
 
 export function mountDocumentView(
   root: HTMLElement,
@@ -54,6 +55,7 @@ export function mountDocumentView(
   let renderingFailed = false;
   return {
     update(next: {
+      uiText?: UiText;
       text: string;
       format?: "markdown" | "text";
       hasContent: boolean;
@@ -62,7 +64,9 @@ export function mountDocumentView(
       retry: () => void;
       canRetry: boolean;
     }) {
-      tooltip.update();
+      const text = next.uiText ?? english;
+      tooltip.update(text.retryDocumentDescription);
+      presentationIssue.textContent = text.renderingFailed;
       if (next.hasContent && (displayed !== next.text || format !== (next.format ?? "text"))) {
         renderingFailed = false;
         try {
@@ -76,13 +80,19 @@ export function mountDocumentView(
           const pre = document.createElement("pre");
           pre.textContent = next.text;
           content.replaceChildren(pre);
-          presentationIssue.textContent = "Document rendering failed. Original source is shown.";
           renderingFailed = true;
         }
         displayed = next.text;
         format = next.format ?? "text";
       }
       // Keep the last render during loading so refresh cannot collapse the scroll container.
+      for (const image of content.querySelectorAll(".document-image-placeholder"))
+        if (image.textContent !== text.documentImage) image.textContent = text.documentImage;
+      for (const input of content.querySelectorAll('input[type="checkbox"]'))
+        input.setAttribute(
+          "aria-label",
+          input.parentElement?.textContent?.trim() || text.documentTask,
+        );
       const hasContent = next.hasContent || (displayed !== null && !!next.status && !next.error);
       content.hidden = !hasContent;
       presentationIssue.hidden = !next.hasContent || !renderingFailed;
@@ -92,7 +102,7 @@ export function mountDocumentView(
       issue.hidden = !next.error;
       retryRoot.hidden = !next.error;
       onRetry = next.retry;
-      retry.update({ disabled: !next.canRetry });
+      retry.update({ label: text.retryDocument, disabled: !next.canRetry });
     },
     dispose() {
       tooltip.dispose();

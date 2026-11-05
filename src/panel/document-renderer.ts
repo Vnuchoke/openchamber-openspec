@@ -19,7 +19,8 @@ export function renderDocument(source: string): DocumentFragment {
         return `<pre><code>${escape(text)}</code></pre>`;
       },
       html: ({ text }) => escape(text),
-      image: ({ text }) => escape(text || "Image"),
+      image: ({ text }) =>
+        text ? escape(text) : '<span class="document-image-placeholder">Image</span>',
       link({ href, tokens }) {
         const label = this.parser.parseInline(tokens);
         if (!/^https?:\/\//i.test(href) && !href.startsWith("#")) return label;
@@ -56,8 +57,9 @@ export function renderDocument(source: string): DocumentFragment {
       "code",
       "a",
       "input",
+      "span",
     ],
-    ALLOWED_ATTR: ["href", "type", "disabled", "checked", "start"],
+    ALLOWED_ATTR: ["href", "type", "disabled", "checked", "start", "class"],
     ALLOW_DATA_ATTR: false,
   });
   for (const link of fragment.querySelectorAll<HTMLAnchorElement>("a[href]")) {
@@ -82,7 +84,8 @@ export function renderDocument(source: string): DocumentFragment {
     if (input.type !== "checkbox") input.remove();
     else {
       input.disabled = true;
-      input.setAttribute("aria-label", input.parentElement?.textContent?.trim() || "Document task");
+      const label = input.parentElement?.textContent?.trim();
+      input.setAttribute("aria-label", label || "Document task");
     }
   }
   for (const table of fragment.querySelectorAll("table")) {

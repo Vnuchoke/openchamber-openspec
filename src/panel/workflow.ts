@@ -1,4 +1,5 @@
 import type { DerivedChange, Stage } from "../model.js";
+import type { UiText } from "./localization.js";
 
 export type GlobalWorkflow = "propose" | "explore" | "new" | "ff" | "bulk-archive" | "onboard";
 
@@ -49,17 +50,16 @@ export const globalWorkflows: {
   },
 ];
 
-export function globalWorkflowPrompt(workflow: GlobalWorkflow): string {
+export function globalWorkflowPrompt(workflow: GlobalWorkflow, text: UiText): string {
   const { skill } = globalWorkflows.find(({ id }) => id === workflow)!;
+  const prompts = text.prompts;
   const instruction =
-    workflow === "bulk-archive"
-      ? "Leave candidate selection, conflict assessment and batch confirmation to the workflow; do not preselect visible or completed changes."
-      : workflow === "onboard"
-        ? "Leave setup permission and onboarding task selection to the workflow and its user questions."
-        : workflow === "explore"
-          ? "Ask the user what ideas to explore. Investigate relevant context, options and trade-offs without file changes or implementation."
-          : "Ask the user to establish their intended change; do not target or finish an existing change's scaffold.";
-  return `Use your skill tool to load and invoke the ${skill} skill.\n\n${instruction} Preserve the workflow's setup checks and required user questions. If the skill is unavailable, report that limitation rather than substituting another workflow.`;
+    prompts.globalGuidance[
+      workflow === "bulk-archive" || workflow === "onboard" || workflow === "explore"
+        ? workflow
+        : "creation"
+    ];
+  return `${prompts.globalIntroduction(skill)}\n\n${instruction} ${prompts.globalSafety}`;
 }
 
 export type ChangeWorkflow =
@@ -121,46 +121,38 @@ export const changeWorkflows: {
   },
 ];
 
-export function changeWorkflowPrompt(workflow: ChangeWorkflow, change: DerivedChange): string {
-  const target = `OpenSpec change "${change.id}"`;
-  const goal = change.goal?.trim() ? `\nGoal: ${change.goal}` : "";
+export function changeWorkflowPrompt(
+  workflow: ChangeWorkflow,
+  change: DerivedChange,
+  text: UiText,
+): string {
+  const prompts = text.prompts;
+  const target = prompts.target(change.id);
   const { skill } = changeWorkflows.find(({ id }) => id === workflow)!;
-  const invocation = `Use your skill tool to load and invoke the ${skill} skill for ${target}.`;
-  switch (workflow) {
-    case "continue":
-      return `${invocation}${goal}\n\nInspect this existing change's status and follow the workflow's artefact instructions to create at most one next planning artefact. Preserve existing decisions and any recorded goal. If no goal is recorded, inspect existing context and ask the user to clarify it if necessary; do not invent a goal or write goal metadata automatically. Do not create another change or implement code. Leave complete planning and partially populated artefacts to the workflow; do not automatically Apply.`;
-    case "explore":
-      return `${invocation}${goal}\n\nInvestigate the goal, relevant code, options and trade-offs for ${target}. Discuss findings without file changes or implementation. If no goal is recorded, inspect existing context and ask the user to clarify it if necessary; do not invent a goal.`;
-    case "apply": {
-      const progress =
-        change.stage === "progress"
-          ? `\n${change.completedTasks} of ${change.totalTasks} tasks complete. Pick up where implementation left off and complete the remaining tasks.`
-          : "";
-      return `${invocation}${progress}\n\nComplete all remaining tasks in ${target}, then verify the implementation against its change artefacts. Resolve any issues found and verify again until all tasks are complete and verification passes. If blocked, report the blocker rather than marking unfinished work complete.`;
-    }
-    case "update":
-      return `${invocation}\n\nReview and revise this change's planning artefacts, preserving existing decisions and the recorded goal. Retain the workflow's required user confirmations. Do not implement tasks or archive the change.`;
-    case "sync":
-      return `${invocation}\n\nSynchronize this change's delta specs with the main specs using the workflow's prerequisite checks and required user questions. Do not implement tasks or archive the change afterward.`;
-    case "verify":
-      return `${invocation}\n\nCompare the implementation with this change's planning artefacts and report gaps and inconsistencies diagnostically, without implementation or archiving.`;
-    case "archive":
-      return `${invocation}\n\nCheck the workflow's archival prerequisites and retain required user confirmations; do not assume prior verification or permission to archive.`;
-  }
+  const goal =
+    (workflow === "continue" || workflow === "explore") && change.goal?.trim()
+      ? prompts.goal(change.goal)
+      : "";
+  const progress =
+    workflow === "apply" && change.stage === "progress"
+      ? prompts.progress(change.completedTasks, change.totalTasks)
+      : "";
+  return `${prompts.changeIntroduction(skill, target)}${goal}${progress}\n\n${prompts.changeGuidance[workflow](target)}`;
 }
 
 export function actionPrompt(
   change: DerivedChange,
   intent: "primary" | "verify" | "explore",
+  text: UiText,
 ): string {
-  if (intent !== "primary") return changeWorkflowPrompt(intent, change);
+  if (intent !== "primary") return changeWorkflowPrompt(intent, change, text);
   const workflow =
     change.stage === "planning" ? "continue" : change.stage === "complete" ? "archive" : "apply";
-  return changeWorkflowPrompt(workflow, change);
+  return changeWorkflowPrompt(workflow, change, text);
 }
 
 export const stages: { id: Stage; label: string; action: string }[] = [
-  { id: "planning", label: "Planning", action: "Continue artifacts" },
+  { id: "planning", label: "Planning", action: "Plan" },
   { id: "ready", label: "Ready", action: "Apply" },
   { id: "progress", label: "In Progress", action: "Apply" },
   { id: "complete", label: "Complete", action: "Archive" },

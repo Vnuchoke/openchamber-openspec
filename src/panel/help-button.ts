@@ -1,4 +1,5 @@
 import { mountButton } from "@openchamber/sdk/ui";
+import { english } from "./localization.js";
 
 let tooltipId = 0;
 let dismissTooltip: (() => void) | null = null;
@@ -91,8 +92,8 @@ export function mountHelpButton(root: HTMLElement, onClick: () => void) {
   root.className = "help-control";
   const handle = mountButton(root, { label: "", variant: "ghost", size: "sm", onClick });
   const button = root.querySelector("button")!;
-  button.setAttribute("aria-label", "OpenSpec quickstart");
-  const tooltip = mountTooltip(button, "Open the OpenSpec quickstart guide.");
+  button.setAttribute("aria-label", english.help);
+  const tooltip = mountTooltip(button, english.helpDescription);
   const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   icon.setAttribute("viewBox", "0 0 24 24");
   icon.setAttribute("width", "16");
@@ -119,6 +120,10 @@ export function mountHelpButton(root: HTMLElement, onClick: () => void) {
   icon.append(outline, hook, dot);
   button.prepend(icon);
   return {
+    update(label: string, description: string) {
+      button.setAttribute("aria-label", label);
+      tooltip.update(description);
+    },
     dispose() {
       tooltip.dispose();
       handle.dispose();

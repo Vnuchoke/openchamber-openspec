@@ -3,6 +3,7 @@ import { isChangeName } from "../model.js";
 import { ServiceRequestError, type Client, type Scope } from "./client.js";
 import { addButtonIcon } from "./button-icon.js";
 import { mountTooltip } from "./help-button.js";
+import { english, describeError, presentMessage, type UiText } from "./localization.js";
 
 type Attempt = { scope: Scope; name: string; goal: string };
 type Mode =
@@ -21,12 +22,12 @@ export function mountCreateDialog(
     inspect: (scope: Scope, name: string) => void;
   },
 ) {
+  let text = english;
   const dialog = document.createElement("dialog");
   const form = document.createElement("form");
   const heading = document.createElement("h2");
   heading.id = "new-change-title";
   dialog.setAttribute("aria-labelledby", heading.id);
-  heading.textContent = "New change";
   const nameRoot = document.createElement("div");
   const goalRoot = document.createElement("div");
   let name = "";
@@ -34,27 +35,31 @@ export function mountCreateDialog(
   let mode: Mode = "editing";
   let attempt: Attempt | null = null;
   let draftScope: Scope | null = null;
-  let messageText = "";
+  let messageText: string | ((text: UiText) => string) = "";
+  let nameInvalid = false;
+  let goalInvalid = false;
   let generation = 0;
   let disposed = false;
   const nameField = mountTextField(nameRoot, {
-    label: "Change name",
+    label: text.changeName,
     value: "",
-    placeholder: "add-change-board",
+    placeholder: text.namePlaceholder,
     mono: true,
     onChange: (value) => {
       name = value;
+      nameInvalid = false;
       nameField.update({ value, error: undefined });
     },
   });
   const goalField = mountTextField(goalRoot, {
-    label: "Goal",
+    label: text.goal,
     value: "",
-    placeholder: "What should this change make possible?",
+    placeholder: text.goalPlaceholder,
     multiline: true,
     rows: 4,
     onChange: (value) => {
       goal = value;
+      goalInvalid = false;
       goalField.update({ value, error: undefined });
     },
   });
@@ -68,26 +73,26 @@ export function mountCreateDialog(
   const inspectRoot = document.createElement("span");
   const forgetRoot = document.createElement("span");
   const dismiss = mountButton(cancelRoot, {
-    label: "Cancel",
+    label: text.cancel,
     variant: "secondary",
     size: "sm",
     onClick: () => dialog.close(),
   });
   const submit = mountButton(submitRoot, {
-    label: "Create",
+    label: text.createSubmit,
     variant: "default",
     size: "sm",
     onClick: () => void submitChange(),
   });
   addButtonIcon(submitRoot, "create");
   const retry = mountButton(retryRoot, {
-    label: "Retry read",
+    label: text.retryRead,
     variant: "secondary",
     size: "sm",
     onClick: () => void reconcile(),
   });
   const inspect = mountButton(inspectRoot, {
-    label: "Inspect change",
+    label: text.inspectChange,
     variant: "secondary",
     size: "sm",
     onClick: () => {
@@ -97,7 +102,7 @@ export function mountCreateDialog(
     },
   });
   const forget = mountButton(forgetRoot, {
-    label: "Dismiss attempt",
+    label: text.dismissAttempt,
     variant: "ghost",
     size: "sm",
     onClick: () => {
@@ -110,7 +115,7 @@ export function mountCreateDialog(
         discardDraft();
         if (mode === "read-failed") {
           attempt = originalAttempt;
-          messageText = "Creation outcome is unknown. Retry the read before creating again.";
+          messageText = (text) => text.createReadRequired;
         } else mode = "editing";
         dialog.close();
         return;
@@ -123,26 +128,11 @@ export function mountCreateDialog(
   });
   actions.append(cancelRoot, forgetRoot, retryRoot, inspectRoot, submitRoot);
   const tooltips = [
-    mountTooltip(
-      cancelRoot.querySelector("button")!,
-      "Close this form without creating another scaffold.",
-    ),
-    mountTooltip(
-      submitRoot.querySelector("button")!,
-      "Directly create the named scaffold and recorded goal in the original project; no agent is launched.",
-    ),
-    mountTooltip(
-      retryRoot.querySelector("button")!,
-      "Read the original project to check the uncertain creation outcome; do not retry creation.",
-    ),
-    mountTooltip(
-      inspectRoot.querySelector("button")!,
-      "Open the observed change for inspection; this does not confirm that creation succeeded.",
-    ),
-    mountTooltip(
-      forgetRoot.querySelector("button")!,
-      "Dismiss this attempt without retrying creation or removing any existing change.",
-    ),
+    mountTooltip(cancelRoot.querySelector("button")!, text.createCloseDescription),
+    mountTooltip(submitRoot.querySelector("button")!, text.createSubmitDescription),
+    mountTooltip(retryRoot.querySelector("button")!, text.createRetryDescription),
+    mountTooltip(inspectRoot.querySelector("button")!, text.inspectDescription),
+    mountTooltip(forgetRoot.querySelector("button")!, text.dismissDescription),
   ];
   form.append(heading, nameRoot, goalRoot, message, actions);
   form.addEventListener("submit", (event) => {
@@ -165,6 +155,7 @@ export function mountCreateDialog(
     name = "";
     goal = "";
     messageText = "";
+    nameInvalid = goalInvalid = false;
     nameField.update({ value: "", error: undefined });
     goalField.update({ value: "", error: undefined });
   }
@@ -172,8 +163,31 @@ export function mountCreateDialog(
     if (!attempt && draftScope && !sameContext(draftScope)) discardDraft();
   });
   function paint() {
-    tooltips.forEach((tooltip) => tooltip.update());
+    const descriptions = [
+      text.createCloseDescription,
+      text.createSubmitDescription,
+      text.createRetryDescription,
+      text.inspectDescription,
+      text.dismissDescription,
+    ];
+    tooltips.forEach((tooltip, index) => tooltip.update(descriptions[index]));
     if (disposed) return;
+    heading.textContent = text.newChange;
+    nameField.update({
+      label: text.changeName,
+      placeholder: text.namePlaceholder,
+      error: nameInvalid ? text.invalidName : undefined,
+    });
+    goalField.update({
+      label: text.goal,
+      placeholder: text.goalPlaceholder,
+      error: goalInvalid ? text.requiredGoal : undefined,
+    });
+    dismiss.update({ label: text.cancel });
+    submit.update({ label: text.createSubmit });
+    retry.update({ label: text.retryRead });
+    inspect.update({ label: text.inspectChange });
+    forget.update({ label: text.dismissAttempt });
     const current = callbacks.current();
     const origin = attempt?.scope ?? draftScope;
     const usable = origin ? sameContext(origin) : current !== null;
@@ -188,10 +202,9 @@ export function mountCreateDialog(
     forgetRoot.hidden = !attempt || busy || (mode === "read-failed" && usable);
     forget.update({ disabled: busy });
     const contextNotice =
-      origin && !usable
-        ? ` Return to ${origin.directory} (OpenSpec root ${origin.root}) to inspect or submit in the original project.`
-        : "";
-    message.textContent = messageText + contextNotice;
+      origin && !usable ? text.originalContext(origin.directory, origin.root) : "";
+    message.textContent =
+      (typeof messageText === "string" ? messageText : messageText(text)) + contextNotice;
     message.hidden = !message.textContent;
   }
   async function reconcile() {
@@ -199,7 +212,7 @@ export function mountCreateDialog(
     const original = attempt;
     const currentGeneration = ++generation;
     mode = "reconciling";
-    messageText = "Checking the original project for a matching change…";
+    messageText = (text) => text.createChecking;
     paint();
     try {
       const listing = await client.list(
@@ -210,17 +223,17 @@ export function mountCreateDialog(
       if (disposed || currentGeneration !== generation) return;
       if (listing.changes.some((entry) => entry.id === original.name)) {
         mode = "observed-existing";
-        messageText =
-          "Creation outcome is unknown. An existing change with this name was found for inspection.";
+        messageText = (text) => text.createObserved;
       } else {
         mode = "editing";
-        messageText =
-          "Creation outcome is unknown. The original project was refreshed; no matching change was found.";
+        messageText = (text) => text.createAbsent;
       }
     } catch (caught) {
       if (disposed || currentGeneration !== generation) return;
       mode = "read-failed";
-      messageText = `Creation outcome is unknown. ${caught instanceof Error ? caught.message : "The original project could not be read."} Retry the read before creating again.`;
+      const diagnostic =
+        caught instanceof Error ? describeError(caught) : ({ key: "originalReadFailed" } as const);
+      messageText = (text) => text.createReadFailed(presentMessage(text, diagnostic));
     }
     paint();
   }
@@ -238,11 +251,13 @@ export function mountCreateDialog(
     const submittedName = name.trim();
     const submittedGoal = goal.trim();
     if (!isChangeName(submittedName)) {
-      nameField.update({ error: "Use lowercase letters or digits separated by single hyphens." });
+      nameInvalid = true;
+      paint();
       return;
     }
     if (!submittedGoal) {
-      goalField.update({ error: "Goal is required." });
+      goalInvalid = true;
+      paint();
       return;
     }
     attempt = { scope: current, name: submittedName, goal: submittedGoal };
@@ -255,7 +270,7 @@ export function mountCreateDialog(
       await client.create(original.scope, original.name, original.goal);
       if (disposed || currentGeneration !== generation) return;
       mode = "confirmed-success";
-      messageText = "Change created.";
+      messageText = (text) => text.changeCreated;
       paint();
       if (sameContext(original.scope)) callbacks.created(original.scope);
       if (dialog.open) dialog.close();
@@ -276,7 +291,8 @@ export function mountCreateDialog(
         caught.code !== "CLI_TIMEOUT"
       ) {
         mode = "editing";
-        messageText = caught.message;
+        const diagnostic = describeError(caught);
+        messageText = (text) => presentMessage(text, diagnostic);
         paint();
         return;
       }
@@ -293,7 +309,10 @@ export function mountCreateDialog(
         dialog.showModal();
       }
     },
-    update: paint,
+    update(next: UiText) {
+      text = next;
+      paint();
+    },
     dispose() {
       tooltips.forEach((tooltip) => tooltip.dispose());
       disposed = true;

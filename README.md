@@ -31,6 +31,37 @@ features are welcome.
 The board's help button opens the OpenSpec quickstart. For ~ x2 faster loads, run
 `openspec config set telemetry.enabled false`, since telemetry can slow down every CLI call.
 
+## Interface language
+
+The persistent **Language / Язык** selector at the bottom of the window offers **Like OpenChamber /
+Как в OpenChamber**, **English** and **Русский**. Automatic mode follows Russian host locales
+(including `ru-RU`); other or malformed locales use English. An explicit choice overrides the host.
+The label and selector share one row on both the board and detail. The preference is extension-wide
+(`ui.language`), not project-specific. New viewers restore it; already-open viewers do not
+synchronize with each other.
+
+Only the selector waits for the initial preference read; the board remains usable. Missing values
+mean automatic mode. Invalid values or a failed read show a warning and temporarily use automatic
+mode without repairing storage. Saving applies the choice only after success; a failed save keeps
+the previous choice and requires a fresh selection to retry. No preference update reloads board data
+or changes search, focus, progress counts or planning content.
+
+Board and retained detail labels, readiness, tasks, document status/retries and shared workflow
+menus/actions support English and Russian. Standard artifact names translate; custom IDs, goals,
+affected areas, document source, task text, paths and raw upstream diagnostics stay verbatim.
+Language changes retain document DOM/selection, expansion, scroll, focused artifact and open-menu
+context without new reads. Workflow IDs, skill IDs and CLI commands are unchanged. Generated
+workflow prompts use the resolved interface language at activation; archive-all uses the language at
+confirmation. New-worktree Apply captures both prompt and session title before workspace inspection,
+so a language change during inspection does not alter the accepted launch. Existing composer drafts
+are not translated or resubmitted when the language changes. Create, delete and archive dialogs
+update in place, retaining draft fields, focus, validation and pending/uncertain attempts; language
+changes do not submit, reconcile or retry operations. Newly emitted operation feedback uses the
+current interface language, while raw SDK/service/CLI diagnostics and resource identifiers remain
+verbatim. The SDK search clear button needs a narrowly scoped accessible-label update after each
+owned search repaint; the SDK itself is not patched. Host-owned toast Copy/OK controls follow
+OpenChamber, not the extension override, and already displayed host toasts are not rewritten.
+
 ## Global workflows
 
 The board's **Workflows** menu prepares an editable, **unsent** prompt in the current chat,
@@ -93,12 +124,16 @@ discarded in the replacement context, without retrying or replaying the prompt.
 
 ### Quick actions and scaffold creation
 
-Planning's primary action is now **Continue artifacts**, not the former existing-scaffold Propose.
-On both cards and detail it invokes Continue for the existing change, preserving decisions and the
-goal verbatim and requesting at most one next planning artifact. Missing goals require
-clarification, not automatic metadata writes. It never automatically starts implementation. Quick
-**Explore** remains Planning-only; global **Propose change** and **Fast-forward** instead plan a new
-change.
+The board toolbar wraps actions before search becomes too narrow, including intermediate sidebar
+widths. Search and its clear control stay within their container without clipping neighbouring
+actions. Workflows uses a standard neutral secondary button with a small down arrow to indicate a
+menu. Hover, keyboard focus and disabled states follow the SDK; primary actions keep their colour.
+
+Planning's primary action is **Plan / Планировать**, not the former existing-scaffold Propose. On
+both cards and detail it invokes Continue for the existing change, preserving decisions and the goal
+verbatim and requesting at most one next planning artifact. Missing goals require clarification, not
+automatic metadata writes. It never automatically starts implementation. Quick **Explore** remains
+Planning-only; global **Propose change** and **Fast-forward** instead plan a new change.
 
 Ready and In Progress both show **Apply**, with current-chat and new-worktree destinations using the
 same Apply prompt. Complete retains **Verify** (diagnostic only) and **Archive** (with prerequisite
